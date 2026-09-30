@@ -166,11 +166,43 @@ class MaximumExecutionDepthExceededException(
   val attemptedDepth: Int
 ) : IllegalStateException("Maximum execution depth exceeded: maximum=$maximumExecutionDepth attempted=$attemptedDepth")
 
+sealed class TurnEvent {
+  data class TurnStarted(val turn: Turn, val executionId: ExecutionId) : TurnEvent()
+  data class ExecutionStarted(
+    val executionId: ExecutionId,
+    val actor: TurnActor,
+    val depth: Int,
+    val parentId: ExecutionId?
+  ) : TurnEvent()
+
+  data class ExecutionCompleted(val executionId: ExecutionId, val result: ExecutionResult<*>) : TurnEvent()
+  data class ExecutionFailed(val executionId: ExecutionId, val failure: Throwable) : TurnEvent()
+  data class ExecutionCancelled(val executionId: ExecutionId) : TurnEvent()
+  data class FlowDecisionApplied(val decision: FlowDecision) : TurnEvent()
+  data class FlowEnded(val turnId: TurnId) : TurnEvent()
+  data class RuntimeStateChanged(val from: RuntimeState, val to: RuntimeState) : TurnEvent()
+}
+
+fun interface TurnEventSink {
+  fun onEvent(event: TurnEvent)
+}
+
+data class TurnSnapshot(
+  val currentTurn: Turn?,
+  val currentActor: TurnActor?,
+  val currentExecutionId: ExecutionId?,
+  val depth: Int,
+  val pendingExecutions: List<ExecutionId>,
+  val flowEnded: Boolean,
+  val runtimeState: RuntimeState?
+)
+
 class TurnEngine(
   private val flow: TurnFlow,
   private val canExecute: (TurnActor, TurnContext) -> Boolean = { _, _ -> true },
   private val handler: suspend (TurnContext) -> Any?,
-  private val maximumExecutionDepth: Int = Int.MAX_VALUE
+  private val maximumExecutionDepth: Int = Int.MAX_VALUE,
+  private val events: TurnEventSink = TurnEventSink {}
 ) {
   constructor(flow: TurnFlow, handler: suspend (TurnContext) -> Any?) : this(flow, { _, _ -> true }, handler)
 
@@ -179,6 +211,21 @@ class TurnEngine(
   }
 
   private var nextExecutionId = 0L
+  private var currentTurn: Turn? = null
+  private val activeExecutions = linkedSetOf<Execution>()
+
+  fun snapshot(): TurnSnapshot {
+    val deepest = activeExecutions.maxByOrNull { it.depth }
+    return TurnSnapshot(
+      currentTurn = currentTurn,
+      currentActor = deepest?.actor ?: currentTurn?.actor,
+      currentExecutionId = deepest?.id,
+      depth = deepest?.depth ?: 0,
+      pendingExecutions = activeExecutions.map { it.id },
+      flowEnded = flow.isEnded(),
+      runtimeState = null
+    )
+  }
 
   private fun opportunityContext(turn: Turn): TurnContext = TurnContext(
     actor = turn.actor,
@@ -203,9 +250,15 @@ class TurnEngine(
         scope = scope
       )
     )
+    currentTurn = turn
     scope.attach(execution)
+    events.onEvent(TurnEvent.TurnStarted(turn, execution.id))
     val result = runExecution(execution) { handler(execution.context) }
-    (result.value as? FlowDecision)?.let { flow.apply(it) }
+    (result.value as? FlowDecision)?.let {
+      flow.apply(it)
+      events.onEvent(TurnEvent.FlowDecisionApplied(it))
+    }
+    if (flow.isEnded()) events.onEvent(TurnEvent.FlowEnded(turn.id))
     return execution
   }
 
@@ -221,14 +274,7 @@ class TurnEngine(
     )
     val scope = ExecutionScope(this)
     val execution = Execution(
-      TurnContext(
-        actor = actor,
-        turnId = parent.turnId,
-        executionId = ExecutionId(nextExecutionId++),
-        depth = childDepth,
-        parent = parent,
-        scope = scope
-      )
+      TurnContext(actor, parent.turnId, ExecutionId(nextExecutionId++), childDepth, parent, scope)
     )
     parent.attachChild(execution)
     scope.attach(execution)
@@ -240,11 +286,9 @@ class TurnEngine(
       parent.resume()
       return result
     } catch (e: CancellationException) {
-      parent.cancel()
-      throw e
+      parent.cancel(); throw e
     } catch (e: Throwable) {
-      parent.fail(e)
-      throw e
+      parent.fail(e); throw e
     } finally {
       parent.detachChild(execution)
       if (parent.state == ExecutionState.SUSPENDED) parent.resume()
@@ -255,51 +299,70 @@ class TurnEngine(
     if (execution.state == ExecutionState.CANCELLED) throw CancellationException("Execution cancelled")
     if (execution.state == ExecutionState.FAILED) throw execution.failure ?: IllegalStateException("Execution failed")
     execution.state = ExecutionState.RUNNING
+    activeExecutions += execution
+    events.onEvent(TurnEvent.ExecutionStarted(execution.id, execution.actor, execution.depth, execution.parent?.id))
     try {
       val raw = block()
       if (execution.state == ExecutionState.CANCELLED) throw CancellationException("Execution cancelled")
       if (execution.state == ExecutionState.FAILED) throw execution.failure ?: IllegalStateException("Execution failed")
       val result = raw as? ExecutionResult<*> ?: ExecutionResult(raw)
       execution.complete(result)
+      events.onEvent(TurnEvent.ExecutionCompleted(execution.id, result))
       return result
     } catch (e: CancellationException) {
       execution.cancel()
+      events.onEvent(TurnEvent.ExecutionCancelled(execution.id))
       throw e
     } catch (e: Throwable) {
       execution.fail(e)
+      events.onEvent(TurnEvent.ExecutionFailed(execution.id, e))
       throw e
+    } finally {
+      activeExecutions -= execution
     }
   }
 }
 
 enum class RuntimeState { IDLE, RUNNING, PAUSED, FINISHED }
 
-class TurnRuntime(private val engine: TurnEngine) {
+class TurnRuntime(
+  private val engine: TurnEngine,
+  private val events: TurnEventSink = TurnEventSink {}
+) {
   var state: RuntimeState = RuntimeState.IDLE
     private set
 
+  fun snapshot(): TurnSnapshot = engine.snapshot().copy(runtimeState = state)
+
+  private fun transition(next: RuntimeState) {
+    if (next == state) return
+    val previous = state
+    state = next
+    events.onEvent(TurnEvent.RuntimeStateChanged(previous, next))
+  }
+
   suspend fun start() {
     check(state == RuntimeState.IDLE) { "TurnRuntime cannot start from $state" }
-    state = RuntimeState.RUNNING
+    transition(RuntimeState.RUNNING)
     while (state == RuntimeState.RUNNING || state == RuntimeState.PAUSED) {
       yield()
       if (state == RuntimeState.PAUSED) continue
       if (engine.isFlowEnded()) {
-        state = RuntimeState.FINISHED; continue
+        transition(RuntimeState.FINISHED); continue
       }
       engine.executeNextTurn()
     }
   }
 
   fun pause() {
-    if (state == RuntimeState.RUNNING) state = RuntimeState.PAUSED
+    if (state == RuntimeState.RUNNING) transition(RuntimeState.PAUSED)
   }
 
   fun resume() {
-    if (state == RuntimeState.PAUSED) state = RuntimeState.RUNNING
+    if (state == RuntimeState.PAUSED) transition(RuntimeState.RUNNING)
   }
 
   fun stop() {
-    if (state == RuntimeState.RUNNING || state == RuntimeState.PAUSED) state = RuntimeState.FINISHED
+    if (state == RuntimeState.RUNNING || state == RuntimeState.PAUSED) transition(RuntimeState.FINISHED)
   }
 }

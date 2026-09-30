@@ -13,6 +13,7 @@ import kotlin.test.assertNull
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.yield
 import kotlinx.coroutines.CompletableDeferred
+import kotlin.test.assertNotNull
 
 class ActorTests {
 
@@ -352,6 +353,7 @@ class TurnRuntimeTests {
 }
 
 class Stage15Tests {
+  @Suppress("SameParameterValue")
   private fun actors(vararg names: String) = names.map { TurnActor(ActorId(it)) }
   private fun engineOf(block: suspend (TurnContext) -> Any? = { FlowDecision.End }): TurnEngine =
     TurnEngine(TurnFlow(actors("A")), handler = block)
@@ -1198,5 +1200,143 @@ class Stage14Test {
       error = e
     }
     assertIs<MaximumExecutionDepthExceededException>(error)
+  }
+}
+
+class Stage16Tests {
+  private fun actor(name: String) = TurnActor(ActorId(name))
+
+  @Test
+  fun `snapshot before execution is empty`() {
+    val flow = TurnFlow(listOf(actor("A")))
+    val engine = TurnEngine(flow, handler = { "x" })
+    val s = engine.snapshot()
+    assertNull(s.currentTurn)
+    assertNull(s.currentActor)
+    assertNull(s.currentExecutionId)
+    assertEquals(0, s.depth)
+    assertTrue(s.pendingExecutions.isEmpty())
+    assertFalse(s.flowEnded)
+    assertNull(s.runtimeState)
+  }
+
+  @Test
+  fun `snapshot inside handler shows active execution`() = runBlocking {
+    val a = actor("A")
+    val flow = TurnFlow(listOf(a))
+    var engineRef: TurnEngine? = null
+    var snap: TurnSnapshot? = null
+    val engine = TurnEngine(flow, handler = { snap = engineRef!!.snapshot(); 42 })
+    engineRef = engine
+    engine.executeNextTurn()
+    val s = snap!!
+    assertEquals(a, s.currentActor)
+    assertEquals(0, s.depth)
+    assertNotNull(s.currentExecutionId)
+    assertEquals(listOf(s.currentExecutionId), s.pendingExecutions)
+    assertEquals(a, s.currentTurn?.actor)
+  }
+
+  @Test
+  fun `nested executions appear in pending with deepest as current`() = runBlocking {
+    val a = actor("A");
+    val b = actor("B")
+    val flow = TurnFlow(listOf(a))
+    var engineRef: TurnEngine? = null
+    var nested: TurnSnapshot? = null
+    val engine = TurnEngine(flow, handler = { ctx ->
+      if (ctx.actor == a) ctx.scope!!.execute(b)
+      else {
+        nested = engineRef!!.snapshot(); "done"
+      }
+    })
+    engineRef = engine
+    engine.executeNextTurn()
+    val s = nested!!
+    assertEquals(b, s.currentActor)
+    assertEquals(1, s.depth)
+    assertEquals(2, s.pendingExecutions.size)
+  }
+
+  @Test
+  fun `snapshot after execution clears pending`() = runBlocking {
+    val flow = TurnFlow(listOf(actor("A")))
+    val engine = TurnEngine(flow, handler = { "x" })
+    engine.executeNextTurn()
+    val s = engine.snapshot()
+    assertTrue(s.pendingExecutions.isEmpty())
+    assertNull(s.currentExecutionId)
+  }
+
+  @Test
+  fun `events reflect turn lifecycle`() = runBlocking {
+    val a = actor("A")
+    val flow = TurnFlow(listOf(a))
+    val events = mutableListOf<TurnEvent>()
+    val engine = TurnEngine(flow, handler = { 42 }, events = TurnEventSink { events += it })
+    engine.executeNextTurn()
+    assertTrue(events.any { it is TurnEvent.TurnStarted })
+    assertTrue(events.any { it is TurnEvent.ExecutionStarted })
+    assertTrue(events.any { it is TurnEvent.ExecutionCompleted })
+    assertFalse(events.any { it is TurnEvent.ExecutionFailed })
+  }
+
+  @Test
+  fun `failure emits event`() = runBlocking {
+    val flow = TurnFlow(listOf(actor("A")))
+    val events = mutableListOf<TurnEvent>()
+    val engine = TurnEngine(
+      flow,
+      handler = { throw IllegalStateException("boom") },
+      events = TurnEventSink { events += it }
+    )
+    try {
+      engine.executeNextTurn()
+    } catch (_: Throwable) {
+    }
+    assertTrue(events.any { it is TurnEvent.ExecutionFailed })
+  }
+
+  @Test
+  fun `flow decision event is emitted`() = runBlocking {
+    val flow = TurnFlow(listOf(actor("A"), actor("B")))
+    val events = mutableListOf<TurnEvent>()
+    val engine = TurnEngine(flow, handler = { FlowDecision.Skip }, events = TurnEventSink { events += it })
+    engine.executeNextTurn()
+    assertTrue(events.any { it is TurnEvent.FlowDecisionApplied })
+  }
+
+  @Test
+  fun `flow ended event is emitted`() = runBlocking {
+    val flow = TurnFlow(listOf(actor("A")))
+    val events = mutableListOf<TurnEvent>()
+    val engine = TurnEngine(flow, handler = { FlowDecision.End }, events = TurnEventSink { events += it })
+    engine.executeNextTurn()
+    assertTrue(events.any { it is TurnEvent.FlowEnded })
+    assertTrue(engine.snapshot().flowEnded)
+  }
+
+  @Test
+  fun `runtime emits state change events`() = runBlocking {
+    val flow = TurnFlow(listOf(actor("A")))
+    val events = mutableListOf<TurnEvent>()
+    val engine = TurnEngine(flow, handler = { FlowDecision.End })
+    val runtime = TurnRuntime(engine, TurnEventSink { events += it })
+    runtime.start()
+    val changes = events.filterIsInstance<TurnEvent.RuntimeStateChanged>()
+    assertEquals(RuntimeState.RUNNING, changes.first().to)
+    assertEquals(RuntimeState.FINISHED, changes.last().to)
+  }
+
+  @Test
+  fun `runtime snapshot includes runtime state`() = runBlocking {
+    val flow = TurnFlow(listOf(actor("A")))
+    var snap: TurnSnapshot? = null
+    lateinit var runtime: TurnRuntime
+    val engine = TurnEngine(flow, handler = { snap = runtime.snapshot(); FlowDecision.End })
+    runtime = TurnRuntime(engine)
+    runtime.start()
+    assertEquals(RuntimeState.RUNNING, snap!!.runtimeState)
+    assertEquals(RuntimeState.FINISHED, runtime.snapshot().runtimeState)
   }
 }
