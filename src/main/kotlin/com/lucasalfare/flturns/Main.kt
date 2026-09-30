@@ -7,18 +7,24 @@ import kotlinx.coroutines.yield
 @JvmInline
 value class ActorId(val value: String)
 
-/** Entity eligible to receive turns. The core knows only its identity. */
+/** Entity eligible to receive turns. The core knows only its identity.
+ * TODO: consider migrate this for a data class
+ * */
 class TurnActor(val id: ActorId) {
   override fun equals(other: Any?): Boolean = other is TurnActor && other.id == id
   override fun hashCode(): Int = id.hashCode()
   override fun toString(): String = "TurnActor(${id.value})"
 }
 
-/** Monotonic identity of a normal turn opportunity. */
+/** Monotonic identity of a normal turn opportunity.
+ * TODO: consider migrate this for a data class
+ * */
 @JvmInline
 value class TurnId(val value: Long)
 
-/** Monotonic identity of a concrete execution. */
+/** Monotonic identity of a concrete execution.
+ * TODO: consider migrate this for a data class
+ * */
 @JvmInline
 value class ExecutionId(val value: Long)
 
@@ -64,6 +70,7 @@ class ExecutionScope internal constructor(private val engine: TurnEngine) {
     throw CancellationException("Execution cancelled")
   }
 
+  // TODO: test this in some way otherwise remove
   fun fail(t: Throwable) {
     parent?.fail(t)
     throw t
@@ -177,8 +184,8 @@ class TurnFlow(actors: List<TurnActor>) {
 
 /** Thrown when an execution requests a child beyond the configured maximum depth. */
 class MaximumExecutionDepthExceededException(
-  val maximumExecutionDepth: Int,
-  val attemptedDepth: Int
+  maximumExecutionDepth: Int,
+  attemptedDepth: Int
 ) : IllegalStateException("Maximum execution depth exceeded: maximum=$maximumExecutionDepth attempted=$attemptedDepth")
 
 /** Events published by the engine and runtime for observability. */
@@ -345,7 +352,7 @@ class TurnEngine(
 /** Lifecycle states of [TurnRuntime]. */
 enum class RuntimeState { IDLE, RUNNING, PAUSED, FINISHED }
 
-/** Drives the engine continuously until the flow ends or it is stopped. */
+/** Drives the engine continuously until the flow ends, or it is stopped. */
 class TurnRuntime(
   private val engine: TurnEngine,
   private val events: TurnEventSink = TurnEventSink {}
