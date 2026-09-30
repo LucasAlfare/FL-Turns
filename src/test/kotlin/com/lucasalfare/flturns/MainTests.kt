@@ -1340,3 +1340,177 @@ class Stage16Tests {
     assertEquals(RuntimeState.FINISHED, runtime.snapshot().runtimeState)
   }
 }
+
+class DummyGameTest {
+  @Test
+  fun normalFlow() = runBlocking {
+    val game = DummyGame()
+    var count = 0
+    val engine = game.engine { ctx ->
+      game.log += ctx.actor.id.value
+      count++
+      if (count == 6) FlowDecision.End else FlowDecision.Continue
+    }
+    game.runtime(engine).start()
+    assertEquals(listOf("A", "B", "C", "A", "B", "C"), game.log)
+  }
+
+  @Test
+  fun repeatDecision() = runBlocking {
+    val game = DummyGame()
+    var count = 0
+    val engine = game.engine { ctx ->
+      game.log += ctx.actor.id.value
+      count++
+      when {
+        count == 1 -> FlowDecision.Repeat
+        count >= 3 -> FlowDecision.End
+        else -> FlowDecision.Continue
+      }
+    }
+    game.runtime(engine).start()
+    assertEquals(listOf("A", "A", "B"), game.log)
+  }
+
+  @Test
+  fun insertDecision() = runBlocking {
+    val game = DummyGame()
+    var count = 0
+    val engine = game.engine { ctx ->
+      game.log += ctx.actor.id.value
+      count++
+      when {
+        count == 1 -> FlowDecision.Insert(game.d)
+        count >= 4 -> FlowDecision.End
+        else -> FlowDecision.Continue
+      }
+    }
+    game.runtime(engine).start()
+    assertEquals(listOf("A", "D", "B", "C"), game.log)
+  }
+
+  @Test
+  fun skipDecision() = runBlocking {
+    val game = DummyGame()
+    var count = 0
+    val engine = game.engine { ctx ->
+      game.log += ctx.actor.id.value
+      count++
+      when {
+        count == 1 -> FlowDecision.Skip
+        count >= 3 -> FlowDecision.End
+        else -> FlowDecision.Continue
+      }
+    }
+    game.runtime(engine).start()
+    assertEquals(listOf("A", "C", "A"), game.log)
+  }
+
+  @Test
+  fun jumpToDecision() = runBlocking {
+    val game = DummyGame()
+    var count = 0
+    val engine = game.engine { ctx ->
+      game.log += ctx.actor.id.value
+      count++
+      when {
+        count == 1 -> FlowDecision.JumpTo(game.c)
+        count >= 3 -> FlowDecision.End
+        else -> FlowDecision.Continue
+      }
+    }
+    game.runtime(engine).start()
+    assertEquals(listOf("A", "C", "A"), game.log)
+  }
+
+  @Test
+  fun eligibilitySkipsIneligibleActor() = runBlocking {
+    val game = DummyGame()
+    var count = 0
+    val engine = game.engine(
+      canExecute = { actor, _ -> actor != game.b }
+    ) { ctx ->
+      game.log += ctx.actor.id.value
+      count++
+      if (count >= 3) FlowDecision.End else FlowDecision.Continue
+    }
+    game.runtime(engine).start()
+    assertEquals(listOf("A", "C", "A"), game.log)
+  }
+
+  @Test
+  fun nestedChainSuspendsAndResolves() = runBlocking {
+    val game = DummyGame()
+    val engine = game.engine { ctx ->
+      game.log += "${ctx.actor.id.value}@${ctx.depth}"
+      when (ctx.actor.id.value) {
+        "A" -> if (ctx.depth == 0) ctx.scope!!.execute(game.b) else ctx.scope!!.execute(game.c)
+        "B" -> ctx.scope!!.execute(game.a)
+        "C" -> ExecutionResult("c-done")
+        else -> null
+      }
+    }
+    val execution = engine.executeNextTurn()
+    assertEquals(listOf("A@0", "B@1", "A@2", "C@3"), game.log)
+    assertEquals("c-done", execution.result?.value)
+  }
+
+  @Test
+  fun multipleDependenciesResolveSequentially() = runBlocking {
+    val game = DummyGame()
+    val engine = game.engine { ctx ->
+      when (ctx.actor.id.value) {
+        "A" -> {
+          val rs = ctx.scope!!.executeAll(game.b, game.c, game.d)
+          ExecutionResult(rs.map { it.value.toString() })
+        }
+
+        "B" -> ExecutionResult("B-result")
+        "C" -> ExecutionResult("C-result")
+        "D" -> ExecutionResult("D-result")
+        else -> null
+      }
+    }
+    val execution = engine.executeNextTurn()
+    assertEquals(listOf("B-result", "C-result", "D-result"), execution.result?.value)
+  }
+
+  @Test
+  fun failurePropagatesToParent() = runBlocking {
+    val game = DummyGame()
+    val engine = game.engine { ctx ->
+      when (ctx.actor.id.value) {
+        "A" -> ctx.scope!!.execute(game.b)
+        "B" -> throw RuntimeException("boom")
+        else -> null
+      }
+    }
+    val ex = assertFailsWith<RuntimeException> { engine.executeNextTurn() }
+    assertEquals("boom", ex.message)
+  }
+
+  @Test
+  fun cancellationPropagatesFromScope(): Unit = runBlocking {
+    val game = DummyGame()
+    val engine = game.engine { ctx ->
+      when (ctx.actor.id.value) {
+        "A" -> ctx.scope!!.cancel()
+        else -> null
+      }
+    }
+    assertFailsWith<kotlin.coroutines.cancellation.CancellationException> { engine.executeNextTurn() }
+  }
+
+  @Test
+  fun runtimeFinishesOnEndDecision() = runBlocking {
+    val game = DummyGame()
+    val engine = game.engine { ctx ->
+      game.log += ctx.actor.id.value
+      FlowDecision.End
+    }
+    val runtime = game.runtime(engine)
+    runtime.start()
+    assertEquals(RuntimeState.FINISHED, runtime.state)
+    assertEquals(listOf("A"), game.log)
+  }
+}
