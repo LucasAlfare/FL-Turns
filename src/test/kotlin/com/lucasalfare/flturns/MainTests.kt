@@ -396,3 +396,89 @@ class ExecutionResultTests {
     assertNull(execution.result?.value)
   }
 }
+
+class ExecutionScopeTests {
+
+  private fun actors(vararg names: String) = names.map { TurnActor(ActorId(it)) }
+
+  @Test
+  fun `execution requests child and receives its result`() = runBlocking {
+    val engine = TurnEngine(TurnFlow(actors("A"))) { ctx ->
+      if (ctx.actor.id.value == "A") {
+        val child = ctx.scope!!.execute(TurnActor(ActorId("B")))
+        "A got ${child.value}"
+      } else "B result"
+    }
+    val root = engine.executeNextTurn()
+    assertEquals("A got B result", root.result?.value)
+  }
+
+  @Test
+  fun `child execution suspends parent until completion`() = runBlocking {
+    val order = mutableListOf<String>()
+    val engine = TurnEngine(TurnFlow(actors("A"))) { ctx ->
+      if (ctx.actor.id.value == "A") {
+        order.add("A before")
+        ctx.scope!!.execute(TurnActor(ActorId("B")))
+        order.add("A after")
+      } else order.add("B")
+      ctx.actor.id.value
+    }
+    engine.executeNextTurn()
+    assertEquals(listOf("A before", "B", "A after"), order)
+  }
+
+  @Test
+  fun `child execution does not consume next normal turn`() = runBlocking {
+    val seen = mutableListOf<String>()
+    val flow = TurnFlow(actors("A", "B", "C"))
+    val engine = TurnEngine(flow) { ctx ->
+      seen.add(ctx.actor.id.value)
+      if (ctx.actor.id.value == "A" && ctx.depth == 0) {
+        val child = ctx.scope!!.execute(TurnActor(ActorId("B")))
+        seen.add("child:${child.value}")
+      }
+      ctx.actor.id.value
+    }
+    engine.executeNextTurn()
+    engine.executeNextTurn()
+    assertEquals(listOf("A", "B", "child:B", "B"), seen)
+  }
+
+  @Test
+  fun `child context keeps turn parent and depth`() = runBlocking {
+    var childContext: TurnContext? = null
+    val engine = TurnEngine(TurnFlow(actors("A"))) { ctx ->
+      if (ctx.actor.id.value == "A") {
+        ctx.scope!!.execute(TurnActor(ActorId("B")))
+        "A"
+      } else {
+        childContext = ctx
+        "B"
+      }
+    }
+    val root = engine.executeNextTurn()
+    assertEquals(0, root.depth)
+    assertEquals(1, childContext?.depth)
+    assertEquals(root.id, childContext?.parent?.id)
+    assertEquals(root.turnId, childContext?.turnId)
+    assertEquals("A", childContext?.parent?.actor?.id?.value)
+  }
+
+  @Test
+  fun `child receives incremental execution id`() = runBlocking {
+    var childId: ExecutionId? = null
+    val engine = TurnEngine(TurnFlow(actors("A"))) { ctx ->
+      if (ctx.actor.id.value == "A") {
+        ctx.scope!!.execute(TurnActor(ActorId("B")))
+        "A"
+      } else {
+        childId = ctx.executionId
+        "B"
+      }
+    }
+    val root = engine.executeNextTurn()
+    assertEquals(ExecutionId(0L), root.id)
+    assertEquals(ExecutionId(1L), childId)
+  }
+}
