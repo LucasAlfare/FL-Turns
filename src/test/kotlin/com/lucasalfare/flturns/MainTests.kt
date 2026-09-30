@@ -814,3 +814,65 @@ class EligibilityStage11Test {
     assertEquals(listOf("A", "A"), executed)
   }
 }
+
+class Stage12MultipleDependenciesTest {
+  @Test
+  fun multipleDependenciesAreSequentialAndDeliveredToParent() = runBlocking {
+    val a = TurnActor(ActorId("A"))
+    val b = TurnActor(ActorId("B"))
+    val c = TurnActor(ActorId("C"))
+    val d = TurnActor(ActorId("D"))
+    val calls = mutableListOf<String>()
+    val engine = TurnEngine(TurnFlow(listOf(a))) { ctx ->
+      calls += "start:${ctx.actor.id.value}"
+      when (ctx.actor.id.value) {
+        "A" -> {
+          val results = ctx.scope!!.executeAll(b, c, d)
+          calls += "end:A"
+          ExecutionResult(results.map { it.value as String })
+        }
+
+        "B" -> {
+          calls += "end:B"
+          ExecutionResult("B")
+        }
+
+        "C" -> {
+          calls += "end:C"
+          ExecutionResult("C")
+        }
+
+        "D" -> {
+          calls += "end:D"
+          ExecutionResult("D")
+        }
+
+        else -> error("unexpected actor")
+      }
+    }
+    val root = engine.executeNextTurn()
+    assertEquals(listOf("B", "C", "D"), root.result!!.value)
+    assertEquals(listOf("start:A", "start:B", "end:B", "start:C", "end:C", "start:D", "end:D", "end:A"), calls)
+  }
+
+  @Test
+  fun childDependenciesDoNotConsumeNormalTurns() = runBlocking {
+    val a = TurnActor(ActorId("A"))
+    val b = TurnActor(ActorId("B"))
+    val c = TurnActor(ActorId("C"))
+    val engine = TurnEngine(TurnFlow(listOf(a, b, c))) { ctx ->
+      when (ctx.actor.id.value) {
+        "A" -> {
+          ctx.scope!!.executeAll(b, c)
+          ExecutionResult("A")
+        }
+
+        "B" -> ExecutionResult("B")
+        "C" -> ExecutionResult("C")
+        else -> error("unexpected actor")
+      }
+    }
+    assertEquals("A", engine.executeNextTurn().actor.id.value)
+    assertEquals("B", engine.executeNextTurn().actor.id.value)
+  }
+}

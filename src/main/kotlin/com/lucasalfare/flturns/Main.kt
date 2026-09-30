@@ -38,6 +38,12 @@ class ExecutionScope internal constructor(private val engine: TurnEngine) {
     val current = requireNotNull(parent) { "ExecutionScope is not attached" }
     return engine.executeChild(current, actor)
   }
+
+  suspend fun executeAll(vararg actors: TurnActor): List<ExecutionResult<*>> {
+    val results = mutableListOf<ExecutionResult<*>>()
+    for (actor in actors) results += execute(actor)
+    return results
+  }
 }
 
 data class TurnContext(
