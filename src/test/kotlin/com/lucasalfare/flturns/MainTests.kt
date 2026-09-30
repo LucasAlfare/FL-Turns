@@ -1037,10 +1037,10 @@ class Stage16Tests {
   }
 }
 
-class DummyGameTest {
+class DummyGame1Test {
   @Test
   fun normalFlow() = runBlocking {
-    val game = DummyGame()
+    val game = DummyGame1()
     var count = 0
     val engine = game.engine { ctx ->
       game.log += ctx.actor.id.value
@@ -1053,7 +1053,7 @@ class DummyGameTest {
 
   @Test
   fun repeatDecision() = runBlocking {
-    val game = DummyGame()
+    val game = DummyGame1()
     var count = 0
     val engine = game.engine { ctx ->
       game.log += ctx.actor.id.value
@@ -1070,7 +1070,7 @@ class DummyGameTest {
 
   @Test
   fun insertDecision() = runBlocking {
-    val game = DummyGame()
+    val game = DummyGame1()
     var count = 0
     val engine = game.engine { ctx ->
       game.log += ctx.actor.id.value
@@ -1087,7 +1087,7 @@ class DummyGameTest {
 
   @Test
   fun skipDecision() = runBlocking {
-    val game = DummyGame()
+    val game = DummyGame1()
     var count = 0
     val engine = game.engine { ctx ->
       game.log += ctx.actor.id.value
@@ -1104,7 +1104,7 @@ class DummyGameTest {
 
   @Test
   fun jumpToDecision() = runBlocking {
-    val game = DummyGame()
+    val game = DummyGame1()
     var count = 0
     val engine = game.engine { ctx ->
       game.log += ctx.actor.id.value
@@ -1121,7 +1121,7 @@ class DummyGameTest {
 
   @Test
   fun eligibilitySkipsIneligibleActor() = runBlocking {
-    val game = DummyGame()
+    val game = DummyGame1()
     var count = 0
     val engine = game.engine(canExecute = { actor, _ -> actor != game.b }) { ctx ->
       game.log += ctx.actor.id.value
@@ -1134,7 +1134,7 @@ class DummyGameTest {
 
   @Test
   fun nestedChainSuspendsAndResolves() = runBlocking {
-    val game = DummyGame()
+    val game = DummyGame1()
     val engine = game.engine { ctx ->
       game.log += "${ctx.actor.id.value}@${ctx.depth}"
       when (ctx.actor.id.value) {
@@ -1151,7 +1151,7 @@ class DummyGameTest {
 
   @Test
   fun multipleDependenciesResolveSequentially() = runBlocking {
-    val game = DummyGame()
+    val game = DummyGame1()
     val engine = game.engine { ctx ->
       when (ctx.actor.id.value) {
         "A" -> {
@@ -1171,7 +1171,7 @@ class DummyGameTest {
 
   @Test
   fun failurePropagatesToParent() = runBlocking {
-    val game = DummyGame()
+    val game = DummyGame1()
     val engine = game.engine { ctx ->
       when (ctx.actor.id.value) {
         "A" -> ctx.scope!!.execute(game.b)
@@ -1184,7 +1184,7 @@ class DummyGameTest {
 
   @Test
   fun cancellationPropagatesFromScope(): Unit = runBlocking {
-    val game = DummyGame()
+    val game = DummyGame1()
     val engine = game.engine { ctx ->
       when (ctx.actor.id.value) {
         "A" -> ctx.scope!!.cancel()
@@ -1196,7 +1196,7 @@ class DummyGameTest {
 
   @Test
   fun runtimeFinishesOnEndDecision() = runBlocking {
-    val game = DummyGame()
+    val game = DummyGame1()
     val engine = game.engine { ctx ->
       game.log += ctx.actor.id.value
       FlowDecision.End

@@ -1,6 +1,6 @@
 package com.lucasalfare.flturns
 
-class DummyGame {
+class DummyGame1 {
   val a = TurnActor(ActorId("A"))
   val b = TurnActor(ActorId("B"))
   val c = TurnActor(ActorId("C"))
