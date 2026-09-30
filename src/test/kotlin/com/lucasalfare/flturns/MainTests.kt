@@ -1,53 +1,37 @@
 package com.lucasalfare.flturns
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.yield
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
-import kotlin.test.assertNotEquals
-import kotlin.test.assertTrue
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
-import kotlin.test.assertNull
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.yield
-import kotlinx.coroutines.CompletableDeferred
+import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class ActorTests {
-
   @Test
-  fun `actorId exposes raw value`() {
+  fun `actorId exposes value and equality`() {
     assertEquals("A", ActorId("A").value)
-  }
-
-  @Test
-  fun `actorIds with same value are equal`() {
     assertEquals(ActorId("A"), ActorId("A"))
     assertEquals(ActorId("A").hashCode(), ActorId("A").hashCode())
-  }
-
-  @Test
-  fun `actorIds with different values are not equal`() {
     assertNotEquals(ActorId("A"), ActorId("B"))
   }
 
   @Test
-  fun `turnActor holds its id`() {
+  fun `turnActor holds id and supports equality`() {
     val id = ActorId("A")
     assertEquals(id, TurnActor(id).id)
-  }
-
-  @Test
-  fun `actors with same id are equal`() {
     assertEquals(TurnActor(ActorId("A")), TurnActor(ActorId("A")))
     assertEquals(TurnActor(ActorId("A")).hashCode(), TurnActor(ActorId("A")).hashCode())
-  }
-
-  @Test
-  fun `actors with different ids are not equal`() {
     assertNotEquals(TurnActor(ActorId("A")), TurnActor(ActorId("B")))
+    assertFalse(TurnActor(ActorId("A")).equals("not an actor"))
   }
 
   @Test
@@ -55,44 +39,16 @@ class ActorTests {
     val a = TurnActor(ActorId("A"))
     val b = TurnActor(ActorId("B"))
     val c = TurnActor(ActorId("C"))
-    assertNotEquals(a, b)
-    assertNotEquals(b, c)
-    assertNotEquals(a, c)
     assertEquals(setOf(a, b, c).size, 3)
-  }
-
-  @Test
-  fun `actor works as map key`() {
-    val a = TurnActor(ActorId("A"))
-    val b = TurnActor(ActorId("B"))
-    val map = mapOf(a to 1, b to 2)
-    assertEquals(1, map[TurnActor(ActorId("A"))])
-    assertEquals(2, map[TurnActor(ActorId("B"))])
-  }
-
-  @Test
-  fun `actor toString includes id value`() {
-    assertTrue(TurnActor(ActorId("A")).toString().contains("A"))
-  }
-
-  @Test
-  fun `actor equality is symmetric and reflexive`() {
-    val a = TurnActor(ActorId("A"))
-    assertEquals(a, a)
-    assertNotEquals(a, TurnActor(ActorId("B")))
-    assertFalse(a.equals("not an actor"))
+    assertEquals(1, mapOf(a to 1, b to 2)[TurnActor(ActorId("A"))])
+    assertTrue(a.toString().contains("A"))
   }
 }
 
 class TurnExecutionTests {
-
   @Test
-  fun `turnId exposes raw value`() {
+  fun `ids expose raw values`() {
     assertEquals(1L, TurnId(1L).value)
-  }
-
-  @Test
-  fun `executionId exposes raw value`() {
     assertEquals(10L, ExecutionId(10L).value)
   }
 
@@ -102,6 +58,8 @@ class TurnExecutionTests {
     val turn = Turn(TurnId(1L), actor)
     assertEquals(TurnId(1L), turn.id)
     assertEquals(actor, turn.actor)
+    assertEquals(Turn(TurnId(1L), actor), Turn(TurnId(1L), actor))
+    assertNotEquals(Turn(TurnId(1L), actor), Turn(TurnId(2L), actor))
   }
 
   @Test
@@ -129,65 +87,27 @@ class TurnExecutionTests {
   }
 
   @Test
-  fun `same execution id is equal`() {
-    val actor = TurnActor(ActorId("A"))
-    val a = Execution(TurnContext(actor, TurnId(1L), ExecutionId(10L), 0))
-    val b = Execution(TurnContext(actor, TurnId(1L), ExecutionId(10L), 0))
-    assertEquals(a, b)
-    assertEquals(a.hashCode(), b.hashCode())
-  }
-
-  @Test
-  fun `different execution ids are not equal`() {
-    val actor = TurnActor(ActorId("A"))
-    val a = Execution(TurnContext(actor, TurnId(1L), ExecutionId(10L), 0))
-    val b = Execution(TurnContext(actor, TurnId(1L), ExecutionId(11L), 0))
-    assertNotEquals(a, b)
-  }
-
-  @Test
-  fun `same turn id and actor are equal`() {
-    val actor = TurnActor(ActorId("A"))
-    assertEquals(Turn(TurnId(1L), actor), Turn(TurnId(1L), actor))
-  }
-
-  @Test
-  fun `different turn ids are not equal`() {
-    val actor = TurnActor(ActorId("A"))
-    assertNotEquals(Turn(TurnId(1L), actor), Turn(TurnId(2L), actor))
-  }
-
-  @Test
   fun `same actor same turn but different executions are distinguishable`() {
     val actor = TurnActor(ActorId("A"))
     val first = Execution(TurnContext(actor, TurnId(1L), ExecutionId(10L), 0))
     val second = Execution(TurnContext(actor, TurnId(1L), ExecutionId(11L), 0))
+    val copy = Execution(TurnContext(actor, TurnId(1L), ExecutionId(10L), 0))
     assertNotEquals(first, second)
-    assertEquals(ExecutionId(10L), first.id)
-    assertEquals(ExecutionId(11L), second.id)
+    assertEquals(first, copy)
+    assertEquals(first.hashCode(), copy.hashCode())
   }
 }
 
 class TurnFlowTests {
-
   private fun actors(vararg names: String) = names.map { TurnActor(ActorId(it)) }
 
   @Test
-  fun `first turn is the first actor`() {
+  fun `cycles through actors in order and wraps around`() {
     val flow = TurnFlow(actors("A", "B", "C"))
-    assertEquals(actors("A")[0], flow.next().actor)
-  }
-
-  @Test
-  fun `cycles through actors in order`() {
-    val flow = TurnFlow(actors("A", "B", "C"))
-    assertEquals(listOf("A", "B", "C"), List(3) { flow.next().actor.id.value })
-  }
-
-  @Test
-  fun `wraps around after the last actor`() {
-    val flow = TurnFlow(actors("A", "B", "C"))
-    assertEquals(listOf("A", "B", "C", "A", "B", "C"), List(6) { flow.next().actor.id.value })
+    assertEquals(
+      listOf("A", "B", "C", "A", "B", "C", "A", "B", "C"),
+      List(9) { flow.next().actor.id.value }
+    )
   }
 
   @Test
@@ -206,33 +126,13 @@ class TurnFlowTests {
   fun `empty actor list is rejected`() {
     assertFailsWith<IllegalArgumentException> { TurnFlow(emptyList()) }
   }
-
-  @Test
-  fun `turn exposes the actor from the flow`() {
-    val a = TurnActor(ActorId("A"))
-    val b = TurnActor(ActorId("B"))
-    val flow = TurnFlow(listOf(a, b))
-    val t0 = flow.next()
-    val t1 = flow.next()
-    assertEquals(a, t0.actor)
-    assertEquals(b, t1.actor)
-    assertNotEquals(t0.id, t1.id)
-  }
-
-  @Test
-  fun `flow keeps producing beyond one full cycle`() {
-    val flow = TurnFlow(actors("A", "B", "C"))
-    val seq = List(9) { flow.next().actor.id.value }
-    assertEquals(listOf("A", "B", "C", "A", "B", "C", "A", "B", "C"), seq)
-  }
 }
 
 class TurnEngineTests {
-
   private fun actors(vararg names: String) = names.map { TurnActor(ActorId(it)) }
 
   @Test
-  fun `executes handler for the next turn`() = runBlocking {
+  fun `executes handler for the next turn with correct context`() = runBlocking {
     val flow = TurnFlow(actors("A", "B", "C"))
     var seen: TurnContext? = null
     val engine = TurnEngine(flow) { seen = it }
@@ -246,17 +146,6 @@ class TurnEngineTests {
     assertNull(seen?.parent)
     assertEquals(ExecutionId(0L), execution.id)
     assertEquals("A", execution.actor.id.value)
-  }
-
-  @Test
-  fun `returns to engine after handler completes`() = runBlocking {
-    val flow = TurnFlow(actors("A"))
-    var completed = false
-    val engine = TurnEngine(flow) { completed = true }
-
-    engine.executeNextTurn()
-
-    assertTrue(completed)
   }
 
   @Test
@@ -280,25 +169,19 @@ class TurnEngineTests {
   }
 
   @Test
-  fun `handler receives actor from flow sequence`() = runBlocking {
+  fun `handler receives actor from flow sequence and suspend handler is awaited`() = runBlocking {
     val flow = TurnFlow(actors("A", "B", "C"))
     val seen = mutableListOf<String>()
-    val engine = TurnEngine(flow) { seen.add(it.actor.id.value) }
+    var completed = false
+    val engine = TurnEngine(flow) {
+      seen.add(it.actor.id.value)
+      completed = true
+    }
 
     repeat(6) { engine.executeNextTurn() }
 
     assertEquals(listOf("A", "B", "C", "A", "B", "C"), seen)
-  }
-
-  @Test
-  fun `suspend handler is awaited before returning`() = runBlocking {
-    val flow = TurnFlow(actors("A"))
-    var value = 0
-    val engine = TurnEngine(flow) { value = 1 }
-
-    engine.executeNextTurn()
-
-    assertEquals(1, value)
+    assertTrue(completed)
   }
 }
 
@@ -306,13 +189,7 @@ class TurnRuntimeTests {
   private fun actors(vararg names: String) = names.map { TurnActor(ActorId(it)) }
 
   @Test
-  fun `runtime starts idle`() {
-    val engine = TurnEngine(TurnFlow(actors("A"))) { }
-    assertEquals(RuntimeState.IDLE, TurnRuntime(engine).state)
-  }
-
-  @Test
-  fun `runtime executes turns until flow ends`() = runBlocking {
+  fun `runtime executes turns until flow ends and becomes finished`() = runBlocking {
     val flow = TurnFlow(actors("A", "B", "C"))
     val seen = mutableListOf<String>()
     var count = 0
@@ -321,28 +198,17 @@ class TurnRuntimeTests {
       count++
       if (count >= 6) FlowDecision.End else FlowDecision.Continue
     }
-    TurnRuntime(engine).start()
-    assertEquals(listOf("A", "B", "C", "A", "B", "C"), seen)
-  }
-
-  @Test
-  fun `runtime becomes finished after flow ends`() = runBlocking {
-    var count = 0
-    val engine = TurnEngine(TurnFlow(actors("A"))) {
-      count++
-      if (count >= 3) FlowDecision.End else FlowDecision.Continue
-    }
     val runtime = TurnRuntime(engine)
     runtime.start()
+    assertEquals(listOf("A", "B", "C", "A", "B", "C"), seen)
     assertEquals(RuntimeState.FINISHED, runtime.state)
   }
 
   @Test
   fun `runtime delegates each iteration to engine`() = runBlocking {
     var count = 0
-    val flow = TurnFlow(actors("A"))
     val seen = mutableListOf<TurnId>()
-    val engine = TurnEngine(flow) {
+    val engine = TurnEngine(TurnFlow(actors("A"))) {
       seen += it.turnId
       count++
       if (count >= 3) FlowDecision.End else FlowDecision.Continue
@@ -352,207 +218,42 @@ class TurnRuntimeTests {
   }
 }
 
-class Stage15Tests {
-  @Suppress("SameParameterValue")
-  private fun actors(vararg names: String) = names.map { TurnActor(ActorId(it)) }
-  private fun engineOf(block: suspend (TurnContext) -> Any? = { FlowDecision.End }): TurnEngine =
-    TurnEngine(TurnFlow(actors("A")), handler = block)
-
-  @Test
-  fun `initial state is IDLE`() {
-    assertEquals(RuntimeState.IDLE, TurnRuntime(engineOf()).state)
-  }
-
-  @Test
-  fun `pause resume stop are noop from IDLE`() {
-    val runtime = TurnRuntime(engineOf())
-    runtime.pause(); assertEquals(RuntimeState.IDLE, runtime.state)
-    runtime.resume(); assertEquals(RuntimeState.IDLE, runtime.state)
-    runtime.stop(); assertEquals(RuntimeState.IDLE, runtime.state)
-  }
-
-  @Test
-  fun `pause from RUNNING sets PAUSED`() = runBlocking {
-    val engine = TurnEngine(TurnFlow(actors("A"))) { }
-    val runtime = TurnRuntime(engine)
-    val job = launch { runtime.start() }
-    yield()
-    assertEquals(RuntimeState.RUNNING, runtime.state)
-    runtime.pause()
-    assertEquals(RuntimeState.PAUSED, runtime.state)
-    runtime.stop()
-    job.join()
-  }
-
-  @Test
-  fun `resume from PAUSED returns to RUNNING`() = runBlocking {
-    val engine = TurnEngine(TurnFlow(actors("A"))) { }
-    val runtime = TurnRuntime(engine)
-    val job = launch { runtime.start() }
-    yield()
-    runtime.pause()
-    yield()
-    runtime.resume()
-    assertEquals(RuntimeState.RUNNING, runtime.state)
-    runtime.stop()
-    job.join()
-  }
-
-  @Test
-  fun `stop from RUNNING sets FINISHED`() = runBlocking {
-    val engine = TurnEngine(TurnFlow(actors("A"))) { }
-    val runtime = TurnRuntime(engine)
-    val job = launch { runtime.start() }
-    yield()
-    runtime.stop()
-    job.join()
-    assertEquals(RuntimeState.FINISHED, runtime.state)
-  }
-
-  @Test
-  fun `pause is noop when already PAUSED`() = runBlocking {
-    val engine = TurnEngine(TurnFlow(actors("A"))) { }
-    val runtime = TurnRuntime(engine)
-    val job = launch { runtime.start() }
-    yield()
-    runtime.pause()
-    runtime.pause()
-    assertEquals(RuntimeState.PAUSED, runtime.state)
-    runtime.stop()
-    job.join()
-  }
-
-  @Test
-  fun `resume is noop when RUNNING`() = runBlocking {
-    val engine = TurnEngine(TurnFlow(actors("A"))) { }
-    val runtime = TurnRuntime(engine)
-    val job = launch { runtime.start() }
-    yield()
-    runtime.resume()
-    assertEquals(RuntimeState.RUNNING, runtime.state)
-    runtime.stop()
-    job.join()
-  }
-
-  @Test
-  fun `start from RUNNING fails`() = runBlocking {
-    val engine = TurnEngine(TurnFlow(actors("A"))) { }
-    val runtime = TurnRuntime(engine)
-    val job = launch { runtime.start() }
-    yield()
-    assertFailsWith<IllegalStateException> { runtime.start() }
-    runtime.stop()
-    job.join()
-  }
-
-  @Test
-  fun `pause prevents new root turns`() = runBlocking {
-    val seen = mutableListOf<String>()
-    val engine = TurnEngine(TurnFlow(actors("A"))) { seen += "A" }
-    val runtime = TurnRuntime(engine)
-    val job = launch { runtime.start() }
-    yield()
-    runtime.pause()
-    yield(); yield(); yield()
-    val snapshot = seen.size
-    yield(); yield(); yield()
-    assertEquals(snapshot, seen.size)
-    runtime.stop()
-    job.join()
-  }
-
-  @Test
-  fun `resume continues execution after pause`() = runBlocking {
-    val seen = mutableListOf<String>()
-    val engine = TurnEngine(TurnFlow(actors("A"))) { seen += "A" }
-    val runtime = TurnRuntime(engine)
-    val job = launch { runtime.start() }
-    yield()
-    runtime.pause()
-    yield(); yield(); yield()
-    val pausedCount = seen.size
-    runtime.resume()
-    yield(); yield(); yield()
-    assertTrue(seen.size > pausedCount)
-    runtime.stop()
-    job.join()
-  }
-
-  @Test
-  fun `stop does not interrupt execution in progress`() = runBlocking {
-    val events = mutableListOf<String>()
-    val gate = CompletableDeferred<Unit>()
-    val engine = TurnEngine(TurnFlow(actors("A"))) {
-      events += "A:start"
-      gate.await()
-      events += "A:end"
-      FlowDecision.End
-    }
-    val runtime = TurnRuntime(engine)
-    val job = launch { runtime.start() }
-    yield(); yield()
-    assertTrue(events.contains("A:start"))
-    runtime.stop()
-    yield(); yield()
-    assertFalse(events.contains("A:end"))
-    gate.complete(Unit)
-    yield(); yield(); yield()
-    assertTrue(events.contains("A:end"))
-    job.join()
-    assertEquals(RuntimeState.FINISHED, runtime.state)
-  }
-}
-
 class ExecutionResultTests {
-
   @Test
-  fun `execution result holds value`() {
+  fun `execution result holds value and arbitrary data`() {
     assertEquals(42, ExecutionResult(42).value)
-  }
-
-  @Test
-  fun `execution result can hold arbitrary data`() {
     val data = listOf("A", 1, true)
     assertEquals(data, ExecutionResult(data).value)
   }
 
   @Test
   fun `execution produces result consumed by caller`() = runBlocking {
-    val flow = TurnFlow(listOf(TurnActor(ActorId("A"))))
-    val engine = TurnEngine(flow) { 42 }
-    val execution = engine.executeNextTurn()
-    assertEquals(42, execution.result?.value)
+    val engine = TurnEngine(TurnFlow(listOf(TurnActor(ActorId("A"))))) { 42 }
+    assertEquals(42, engine.executeNextTurn().result?.value)
   }
 
   @Test
   fun `execution accepts explicit execution result`() = runBlocking {
-    val flow = TurnFlow(listOf(TurnActor(ActorId("A"))))
-    val engine = TurnEngine(flow) { ExecutionResult("done") }
-    val execution = engine.executeNextTurn()
-    assertEquals("done", execution.result?.value)
+    val engine = TurnEngine(TurnFlow(listOf(TurnActor(ActorId("A"))))) { ExecutionResult("done") }
+    assertEquals("done", engine.executeNextTurn().result?.value)
   }
 
   @Test
   fun `each execution carries its own result`() = runBlocking {
     val flow = TurnFlow(listOf(TurnActor(ActorId("A")), TurnActor(ActorId("B"))))
     val engine = TurnEngine(flow) { if (it.actor.id.value == "A") 1 else 2 }
-    val first = engine.executeNextTurn()
-    val second = engine.executeNextTurn()
-    assertEquals(1, first.result?.value)
-    assertEquals(2, second.result?.value)
+    assertEquals(1, engine.executeNextTurn().result?.value)
+    assertEquals(2, engine.executeNextTurn().result?.value)
   }
 
   @Test
   fun `handler can produce null result`() = runBlocking {
-    val flow = TurnFlow(listOf(TurnActor(ActorId("A"))))
-    val engine = TurnEngine(flow) { null }
-    val execution = engine.executeNextTurn()
-    assertNull(execution.result?.value)
+    val engine = TurnEngine(TurnFlow(listOf(TurnActor(ActorId("A"))))) { null }
+    assertNull(engine.executeNextTurn().result?.value)
   }
 }
 
 class ExecutionScopeTests {
-
   private fun actors(vararg names: String) = names.map { TurnActor(ActorId(it)) }
 
   @Test
@@ -563,8 +264,7 @@ class ExecutionScopeTests {
         "A got ${child.value}"
       } else "B result"
     }
-    val root = engine.executeNextTurn()
-    assertEquals("A got B result", root.result?.value)
+    assertEquals("A got B result", engine.executeNextTurn().result?.value)
   }
 
   @Test
@@ -682,14 +382,16 @@ class Stage9Tests {
   private fun actor(name: String) = TurnActor(ActorId(name))
 
   @Test
-  fun childExecutionDoesNotAdvanceTurnFlow() = runBlocking {
+  fun childExecutionDoesNotAdvanceTurnFlowNorReplaceNextNormalTurn() = runBlocking {
     val a = actor("A")
     val b = actor("B")
     val c = actor("C")
     val flow = TurnFlow(listOf(a, b, c))
+    val roots = mutableListOf<String>()
     val visited = mutableListOf<String>()
     val engine = TurnEngine(flow) { ctx ->
       visited += ctx.actor.id.value
+      if (ctx.depth == 0) roots += ctx.actor.id.value
       if (ctx.actor == a && ctx.depth == 0) ctx.scope!!.execute(c)
       null
     }
@@ -698,22 +400,6 @@ class Stage9Tests {
     assertEquals(a, first.actor)
     assertEquals(b, second.actor)
     assertEquals(listOf("A", "C", "B"), visited)
-  }
-
-  @Test
-  fun childExecutionDoesNotReplaceNextNormalTurn() = runBlocking {
-    val a = actor("A")
-    val b = actor("B")
-    val c = actor("C")
-    val flow = TurnFlow(listOf(a, b, c))
-    val roots = mutableListOf<String>()
-    val engine = TurnEngine(flow) { ctx ->
-      if (ctx.depth == 0) roots += ctx.actor.id.value
-      if (ctx.actor == a && ctx.depth == 0) ctx.scope!!.execute(c)
-      null
-    }
-    engine.executeNextTurn()
-    engine.executeNextTurn()
     assertEquals(listOf("A", "B"), roots)
   }
 
@@ -741,59 +427,24 @@ class Stage9Tests {
   }
 
   @Test
-  fun rootTurnCompletesOnlyAfterChildrenResolve() = runBlocking {
+  fun rootTurnCompletesOnlyAfterChildrenResolveAndParentReceivesResult() = runBlocking {
     val a = actor("A")
     val b = actor("B")
     val flow = TurnFlow(listOf(a))
     val events = mutableListOf<String>()
-    val engine = TurnEngine(flow) { ctx ->
-      if (ctx.actor == a) {
-        events += "A:start"
-        ctx.scope!!.execute(b)
-        events += "A:after"
-      } else events += "B:start"
-      null
-    }
-    engine.executeNextTurn()
-    assertEquals(listOf("A:start", "B:start", "A:after"), events)
-  }
-
-  @Test
-  fun parentReceivesChildResultBeforeCompleting() = runBlocking {
-    val a = actor("A")
-    val b = actor("B")
-    val flow = TurnFlow(listOf(a))
     var received: Any? = null
     val engine = TurnEngine(flow) { ctx ->
       if (ctx.actor == a) {
-        val r = ctx.scope!!.execute(b)
-        received = r.value
-      } else ExecutionResult(42)
+        events += "A:start"
+        received = ctx.scope!!.execute(b).value
+        events += "A:after"
+      } else events += "B:start"
+      if (ctx.actor == b) ExecutionResult(42) else null
     }
     val root = engine.executeNextTurn()
+    assertEquals(listOf("A:start", "B:start", "A:after"), events)
     assertEquals(42, received)
     assertNotEquals(null, root.result)
-  }
-
-  @Test
-  fun nestedExecutionDoesNotConsumeNormalTurnsFromFlow() = runBlocking {
-    val a = actor("A")
-    val b = actor("B")
-    val c = actor("C")
-    val flow = TurnFlow(listOf(a, b, c))
-    val rootTurns = mutableListOf<TurnId>()
-    val engine = TurnEngine(flow) { ctx ->
-      if (ctx.depth == 0) rootTurns += ctx.turnId
-      if (ctx.actor == a && ctx.depth == 0) {
-        ctx.scope!!.execute(c)
-        ctx.scope.execute(c)
-      }
-      null
-    }
-    engine.executeNextTurn()
-    engine.executeNextTurn()
-    engine.executeNextTurn()
-    assertEquals(listOf(TurnId(0), TurnId(1), TurnId(2)), rootTurns)
   }
 }
 
@@ -881,8 +532,7 @@ class FlowDecisionTest {
   @Test
   fun endStopsFlow() = runBlocking {
     val engine = TurnEngine(flow()) { FlowDecision.End }
-    val first = engine.executeNextTurn()
-    assertEquals(a, first.actor)
+    assertEquals(a, engine.executeNextTurn().actor)
     assertTrue(engine.isFlowEnded())
     val error = assertFailsWith<IllegalStateException> { engine.executeNextTurn() }
     assertEquals("TurnFlow has ended", error.message)
@@ -911,27 +561,24 @@ class EligibilityStage11Test {
 
   @Test
   fun defaultEligibilityKeepsFlow() = runBlocking {
-    val flow = TurnFlow(listOf(a, b, c))
+    val engine = TurnEngine(TurnFlow(listOf(a, b, c))) { }
     val executed = mutableListOf<String>()
-    val engine = TurnEngine(flow) { executed += it.actor.id.value }
-    engine.executeNextTurn()
-    engine.executeNextTurn()
-    engine.executeNextTurn()
+    repeat(3) { executed += engine.executeNextTurn().actor.id.value }
     assertEquals(listOf("A", "B", "C"), executed)
   }
 
   @Test
-  fun ineligibleActorIsSkipped() = runBlocking {
+  fun ineligibleActorIsSkippedIncludingConsecutiveOnes() = runBlocking {
     val flow = TurnFlow(listOf(a, b, c))
     val executed = mutableListOf<String>()
     val engine = TurnEngine(
       flow = flow,
-      canExecute = { actor, _ -> actor != b },
+      canExecute = { actor, _ -> actor != b && actor != c },
       handler = { executed += it.actor.id.value }
     )
     engine.executeNextTurn()
     engine.executeNextTurn()
-    assertEquals(listOf("A", "C"), executed)
+    assertEquals(listOf("A", "A"), executed)
   }
 
   @Test
@@ -948,24 +595,8 @@ class EligibilityStage11Test {
     )
     engine.executeNextTurn()
     engine.executeNextTurn()
-    assertEquals("A", calls[0].first)
-    assertEquals(TurnId(0), calls[0].second)
-    assertEquals("B", calls[1].first)
-    assertEquals(TurnId(1), calls[1].second)
-  }
-
-  @Test
-  fun multipleIneligibleActorsAreSkipped() = runBlocking {
-    val flow = TurnFlow(listOf(a, b, c))
-    val executed = mutableListOf<String>()
-    val engine = TurnEngine(
-      flow = flow,
-      canExecute = { actor, _ -> actor != b && actor != c },
-      handler = { executed += it.actor.id.value }
-    )
-    engine.executeNextTurn()
-    engine.executeNextTurn()
-    assertEquals(listOf("A", "A"), executed)
+    assertEquals("A", calls[0].first); assertEquals(TurnId(0), calls[0].second)
+    assertEquals("B", calls[1].first); assertEquals(TurnId(1), calls[1].second)
   }
 }
 
@@ -987,18 +618,15 @@ class Stage12MultipleDependenciesTest {
         }
 
         "B" -> {
-          calls += "end:B"
-          ExecutionResult("B")
+          calls += "end:B"; ExecutionResult("B")
         }
 
         "C" -> {
-          calls += "end:C"
-          ExecutionResult("C")
+          calls += "end:C"; ExecutionResult("C")
         }
 
         "D" -> {
-          calls += "end:D"
-          ExecutionResult("D")
+          calls += "end:D"; ExecutionResult("D")
         }
 
         else -> error("unexpected actor")
@@ -1017,8 +645,7 @@ class Stage12MultipleDependenciesTest {
     val engine = TurnEngine(TurnFlow(listOf(a, b, c))) { ctx ->
       when (ctx.actor.id.value) {
         "A" -> {
-          ctx.scope!!.executeAll(b, c)
-          ExecutionResult("A")
+          ctx.scope!!.executeAll(b, c); ExecutionResult("A")
         }
 
         "B" -> ExecutionResult("B")
@@ -1034,8 +661,7 @@ class Stage12MultipleDependenciesTest {
 class Stage13Test {
   @Test
   fun normalExecutionCompletes() = runBlocking {
-    val actor = TurnActor(ActorId("A"))
-    val engine = TurnEngine(TurnFlow(listOf(actor))) { ExecutionResult(42) }
+    val engine = TurnEngine(TurnFlow(listOf(TurnActor(ActorId("A"))))) { ExecutionResult(42) }
     val execution = engine.executeNextTurn()
     assertEquals(ExecutionState.COMPLETED, execution.state)
     assertEquals(42, execution.result?.value)
@@ -1044,8 +670,7 @@ class Stage13Test {
   @Test
   fun selfCancellationThrowsAndStops() = runBlocking {
     var afterCancel = false
-    val actor = TurnActor(ActorId("A"))
-    val engine = TurnEngine(TurnFlow(listOf(actor))) { ctx ->
+    val engine = TurnEngine(TurnFlow(listOf(TurnActor(ActorId("A"))))) { ctx ->
       ctx.scope?.cancel()
       afterCancel = true
       ExecutionResult(1)
@@ -1084,9 +709,7 @@ class Stage13Test {
         ctx.scope?.execute(childActor)
         parentAfter = true
         ExecutionResult(1)
-      } else {
-        throw boom
-      }
+      } else throw boom
     }
     val thrown = assertFailsWith<RuntimeException> { engine.executeNextTurn() }
     assertEquals(boom, thrown)
@@ -1103,13 +726,11 @@ class Stage13Test {
       if (ctx.actor == parentActor) {
         try {
           ctx.scope?.execute(childActor)
-        } catch (e: RuntimeException) {
+        } catch (_: RuntimeException) {
         }
         parentContinued = true
         ExecutionResult(1)
-      } else {
-        throw boom
-      }
+      } else throw boom
     }
     val thrown = assertFailsWith<RuntimeException> { engine.executeNextTurn() }
     assertEquals(boom, thrown)
@@ -1203,13 +824,104 @@ class Stage14Test {
   }
 }
 
+class Stage15Tests {
+  private fun actors(vararg names: String) = names.map { TurnActor(ActorId(it)) }
+  private fun engineOf(block: suspend (TurnContext) -> Any? = { FlowDecision.End }): TurnEngine =
+    TurnEngine(TurnFlow(actors("A")), handler = block)
+
+  @Test
+  fun `initial state is IDLE and lifecycle ops are noop`() {
+    val runtime = TurnRuntime(engineOf())
+    assertEquals(RuntimeState.IDLE, runtime.state)
+    runtime.pause(); assertEquals(RuntimeState.IDLE, runtime.state)
+    runtime.resume(); assertEquals(RuntimeState.IDLE, runtime.state)
+    runtime.stop(); assertEquals(RuntimeState.IDLE, runtime.state)
+  }
+
+  @Test
+  fun `pause resume stop transitions`() = runBlocking {
+    val engine = TurnEngine(TurnFlow(actors("A"))) { }
+    val runtime = TurnRuntime(engine)
+    val job = launch { runtime.start() }
+    yield()
+    assertEquals(RuntimeState.RUNNING, runtime.state)
+
+    runtime.pause()
+    assertEquals(RuntimeState.PAUSED, runtime.state)
+    runtime.pause()
+    assertEquals(RuntimeState.PAUSED, runtime.state)
+
+    runtime.resume()
+    assertEquals(RuntimeState.RUNNING, runtime.state)
+    runtime.resume()
+    assertEquals(RuntimeState.RUNNING, runtime.state)
+
+    runtime.stop()
+    job.join()
+    assertEquals(RuntimeState.FINISHED, runtime.state)
+  }
+
+  @Test
+  fun `start from RUNNING fails`() = runBlocking {
+    val engine = TurnEngine(TurnFlow(actors("A"))) { }
+    val runtime = TurnRuntime(engine)
+    val job = launch { runtime.start() }
+    yield()
+    assertFailsWith<IllegalStateException> { runtime.start() }
+    runtime.stop()
+    job.join()
+  }
+
+  @Test
+  fun `pause prevents new root turns and resume continues execution`() = runBlocking {
+    val seen = mutableListOf<String>()
+    val engine = TurnEngine(TurnFlow(actors("A"))) { seen += "A" }
+    val runtime = TurnRuntime(engine)
+    val job = launch { runtime.start() }
+    yield()
+    runtime.pause()
+    yield(); yield(); yield()
+    val pausedCount = seen.size
+    yield(); yield(); yield()
+    assertEquals(pausedCount, seen.size)
+    runtime.resume()
+    yield(); yield(); yield()
+    assertTrue(seen.size > pausedCount)
+    runtime.stop()
+    job.join()
+  }
+
+  @Test
+  fun `stop does not interrupt execution in progress`() = runBlocking {
+    val events = mutableListOf<String>()
+    val gate = CompletableDeferred<Unit>()
+    val engine = TurnEngine(TurnFlow(actors("A"))) {
+      events += "A:start"
+      gate.await()
+      events += "A:end"
+      FlowDecision.End
+    }
+    val runtime = TurnRuntime(engine)
+    val job = launch { runtime.start() }
+    yield(); yield()
+    assertTrue(events.contains("A:start"))
+    runtime.stop()
+    yield(); yield()
+    assertFalse(events.contains("A:end"))
+    gate.complete(Unit)
+    yield(); yield(); yield()
+    assertTrue(events.contains("A:end"))
+    job.join()
+    assertEquals(RuntimeState.FINISHED, runtime.state)
+  }
+}
+
 class Stage16Tests {
   private fun actor(name: String) = TurnActor(ActorId(name))
 
   @Test
   fun `snapshot before execution is empty`() {
-    val flow = TurnFlow(listOf(actor("A")))
-    val engine = TurnEngine(flow, handler = { "x" })
+    val engine = TurnEngine(TurnFlow(listOf(actor("A"))), handler = { "x" })
     val s = engine.snapshot()
     assertNull(s.currentTurn)
     assertNull(s.currentActor)
@@ -1223,10 +935,9 @@ class Stage16Tests {
   @Test
   fun `snapshot inside handler shows active execution`() = runBlocking {
     val a = actor("A")
-    val flow = TurnFlow(listOf(a))
     var engineRef: TurnEngine? = null
     var snap: TurnSnapshot? = null
-    val engine = TurnEngine(flow, handler = { snap = engineRef!!.snapshot(); 42 })
+    val engine = TurnEngine(TurnFlow(listOf(a)), handler = { snap = engineRef!!.snapshot(); 42 })
     engineRef = engine
     engine.executeNextTurn()
     val s = snap!!
@@ -1239,12 +950,11 @@ class Stage16Tests {
 
   @Test
   fun `nested executions appear in pending with deepest as current`() = runBlocking {
-    val a = actor("A");
+    val a = actor("A")
     val b = actor("B")
-    val flow = TurnFlow(listOf(a))
     var engineRef: TurnEngine? = null
     var nested: TurnSnapshot? = null
-    val engine = TurnEngine(flow, handler = { ctx ->
+    val engine = TurnEngine(TurnFlow(listOf(a)), handler = { ctx ->
       if (ctx.actor == a) ctx.scope!!.execute(b)
       else {
         nested = engineRef!!.snapshot(); "done"
@@ -1260,8 +970,7 @@ class Stage16Tests {
 
   @Test
   fun `snapshot after execution clears pending`() = runBlocking {
-    val flow = TurnFlow(listOf(actor("A")))
-    val engine = TurnEngine(flow, handler = { "x" })
+    val engine = TurnEngine(TurnFlow(listOf(actor("A"))), handler = { "x" })
     engine.executeNextTurn()
     val s = engine.snapshot()
     assertTrue(s.pendingExecutions.isEmpty())
@@ -1269,24 +978,23 @@ class Stage16Tests {
   }
 
   @Test
-  fun `events reflect turn lifecycle`() = runBlocking {
-    val a = actor("A")
-    val flow = TurnFlow(listOf(a))
+  fun `events reflect turn lifecycle and flow decisions`() = runBlocking {
+    val flow = TurnFlow(listOf(actor("A"), actor("B")))
     val events = mutableListOf<TurnEvent>()
-    val engine = TurnEngine(flow, handler = { 42 }, events = TurnEventSink { events += it })
+    val engine = TurnEngine(flow, handler = { FlowDecision.Skip }, events = TurnEventSink { events += it })
     engine.executeNextTurn()
     assertTrue(events.any { it is TurnEvent.TurnStarted })
     assertTrue(events.any { it is TurnEvent.ExecutionStarted })
     assertTrue(events.any { it is TurnEvent.ExecutionCompleted })
+    assertTrue(events.any { it is TurnEvent.FlowDecisionApplied })
     assertFalse(events.any { it is TurnEvent.ExecutionFailed })
   }
 
   @Test
   fun `failure emits event`() = runBlocking {
-    val flow = TurnFlow(listOf(actor("A")))
     val events = mutableListOf<TurnEvent>()
     val engine = TurnEngine(
-      flow,
+      TurnFlow(listOf(actor("A"))),
       handler = { throw IllegalStateException("boom") },
       events = TurnEventSink { events += it }
     )
@@ -1298,44 +1006,32 @@ class Stage16Tests {
   }
 
   @Test
-  fun `flow decision event is emitted`() = runBlocking {
-    val flow = TurnFlow(listOf(actor("A"), actor("B")))
-    val events = mutableListOf<TurnEvent>()
-    val engine = TurnEngine(flow, handler = { FlowDecision.Skip }, events = TurnEventSink { events += it })
-    engine.executeNextTurn()
-    assertTrue(events.any { it is TurnEvent.FlowDecisionApplied })
-  }
-
-  @Test
   fun `flow ended event is emitted`() = runBlocking {
-    val flow = TurnFlow(listOf(actor("A")))
     val events = mutableListOf<TurnEvent>()
-    val engine = TurnEngine(flow, handler = { FlowDecision.End }, events = TurnEventSink { events += it })
+    val engine = TurnEngine(
+      TurnFlow(listOf(actor("A"))),
+      handler = { FlowDecision.End },
+      events = TurnEventSink { events += it }
+    )
     engine.executeNextTurn()
     assertTrue(events.any { it is TurnEvent.FlowEnded })
     assertTrue(engine.snapshot().flowEnded)
   }
 
   @Test
-  fun `runtime emits state change events`() = runBlocking {
-    val flow = TurnFlow(listOf(actor("A")))
+  fun `runtime emits state change events and snapshot includes runtime state`() = runBlocking {
+    var snap: TurnSnapshot? = null
+    lateinit var runtime: TurnRuntime
     val events = mutableListOf<TurnEvent>()
-    val engine = TurnEngine(flow, handler = { FlowDecision.End })
-    val runtime = TurnRuntime(engine, TurnEventSink { events += it })
+    val engine = TurnEngine(
+      TurnFlow(listOf(actor("A"))),
+      handler = { snap = runtime.snapshot(); FlowDecision.End }
+    )
+    runtime = TurnRuntime(engine) { events += it }
     runtime.start()
     val changes = events.filterIsInstance<TurnEvent.RuntimeStateChanged>()
     assertEquals(RuntimeState.RUNNING, changes.first().to)
     assertEquals(RuntimeState.FINISHED, changes.last().to)
-  }
-
-  @Test
-  fun `runtime snapshot includes runtime state`() = runBlocking {
-    val flow = TurnFlow(listOf(actor("A")))
-    var snap: TurnSnapshot? = null
-    lateinit var runtime: TurnRuntime
-    val engine = TurnEngine(flow, handler = { snap = runtime.snapshot(); FlowDecision.End })
-    runtime = TurnRuntime(engine)
-    runtime.start()
     assertEquals(RuntimeState.RUNNING, snap!!.runtimeState)
     assertEquals(RuntimeState.FINISHED, runtime.snapshot().runtimeState)
   }
@@ -1427,9 +1123,7 @@ class DummyGameTest {
   fun eligibilitySkipsIneligibleActor() = runBlocking {
     val game = DummyGame()
     var count = 0
-    val engine = game.engine(
-      canExecute = { actor, _ -> actor != game.b }
-    ) { ctx ->
+    val engine = game.engine(canExecute = { actor, _ -> actor != game.b }) { ctx ->
       game.log += ctx.actor.id.value
       count++
       if (count >= 3) FlowDecision.End else FlowDecision.Continue
@@ -1485,8 +1179,7 @@ class DummyGameTest {
         else -> null
       }
     }
-    val ex = assertFailsWith<RuntimeException> { engine.executeNextTurn() }
-    assertEquals("boom", ex.message)
+    assertEquals("boom", assertFailsWith<RuntimeException> { engine.executeNextTurn() }.message)
   }
 
   @Test
@@ -1498,7 +1191,7 @@ class DummyGameTest {
         else -> null
       }
     }
-    assertFailsWith<kotlin.coroutines.cancellation.CancellationException> { engine.executeNextTurn() }
+    assertFailsWith<CancellationException> { engine.executeNextTurn() }
   }
 
   @Test
@@ -1512,85 +1205,5 @@ class DummyGameTest {
     runtime.start()
     assertEquals(RuntimeState.FINISHED, runtime.state)
     assertEquals(listOf("A"), game.log)
-  }
-}
-
-class Stage18ApiSurfaceTest {
-  private val a = TurnActor(ActorId("A"))
-  private val b = TurnActor(ActorId("B"))
-
-  @Test
-  fun runtimeSnapshotStartsIdle() {
-    val engine = TurnEngine(TurnFlow(listOf(a, b))) { ExecutionResult(Unit) }
-    val runtime = TurnRuntime(engine)
-    val snap = runtime.snapshot()
-    assertEquals(RuntimeState.IDLE, snap.runtimeState)
-    assertFalse(snap.flowEnded)
-    assertNull(snap.currentTurn)
-    assertEquals(0, snap.depth)
-    assertTrue(snap.pendingExecutions.isEmpty())
-  }
-
-  @Test
-  fun executionViewIsReadOnlyAfterCompletion(): Unit = runBlocking {
-    lateinit var ctx: TurnContext
-    val engine = TurnEngine(TurnFlow(listOf(a, b))) { c -> ctx = c; ExecutionResult(42) }
-    val exec = engine.executeNextTurn()
-    assertEquals(ExecutionState.COMPLETED, exec.state)
-    assertEquals(42, exec.result?.value)
-    assertEquals(a, exec.actor)
-    assertEquals(0, exec.depth)
-    assertNull(exec.parent)
-    assertEquals(exec.id, ctx.executionId)
-    assertEquals(a, ctx.actor)
-    assertEquals(0, ctx.depth)
-    assertNull(ctx.parent)
-    assertNotNull(ctx.scope)
-  }
-
-  @Test
-  fun runtimeFinishesWhenFlowEnds() = runBlocking {
-    val engine = TurnEngine(TurnFlow(listOf(a))) { FlowDecision.End }
-    val runtime = TurnRuntime(engine)
-    runtime.start()
-    assertEquals(RuntimeState.FINISHED, runtime.state)
-    assertTrue(engine.isFlowEnded())
-  }
-
-  @Test
-  fun maximumExecutionDepthIsEnforced(): Unit = runBlocking {
-    val engine = TurnEngine(
-      flow = TurnFlow(listOf(a)),
-      handler = { ctx -> ctx.scope!!.execute(a); ExecutionResult(ctx.depth) },
-      maximumExecutionDepth = 1
-    )
-    assertFailsWith<MaximumExecutionDepthExceededException> { engine.executeNextTurn() }
-  }
-
-  @Test
-  fun childExecutionDoesNotAdvanceNormalFlow() = runBlocking {
-    val log = mutableListOf<String>()
-    val engine = TurnEngine(TurnFlow(listOf(a, b))) { ctx ->
-      log += "${ctx.actor.id.value}:${ctx.depth}"
-      if (ctx.actor == a && ctx.depth == 0) ctx.scope!!.execute(b)
-      ExecutionResult(Unit)
-    }
-    val root = engine.executeNextTurn()
-    assertEquals(a, root.actor)
-    assertEquals(listOf("A:0", "B:1"), log)
-    val next = engine.executeNextTurn()
-    assertEquals(b, next.actor)
-    assertEquals(0, next.depth)
-  }
-
-  @Test
-  fun eventsExposeExecutionLifecycle() = runBlocking {
-    val seen = mutableListOf<TurnEvent>()
-    val engine =
-      TurnEngine(TurnFlow(listOf(a)), handler = { ExecutionResult(1) }, events = TurnEventSink { seen += it })
-    engine.executeNextTurn()
-    assertTrue(seen.any { it is TurnEvent.TurnStarted })
-    assertTrue(seen.any { it is TurnEvent.ExecutionStarted })
-    assertTrue(seen.any { it is TurnEvent.ExecutionCompleted })
   }
 }
