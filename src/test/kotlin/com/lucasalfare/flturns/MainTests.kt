@@ -2,6 +2,7 @@ package com.lucasalfare.flturns
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 import kotlin.test.assertFalse
@@ -157,5 +158,64 @@ class TurnExecutionTests {
     assertNotEquals(first, second)
     assertEquals(ExecutionId(10L), first.id)
     assertEquals(ExecutionId(11L), second.id)
+  }
+}
+
+class TurnFlowTests {
+
+  private fun actors(vararg names: String) = names.map { TurnActor(ActorId(it)) }
+
+  @Test
+  fun `first turn is the first actor`() {
+    val flow = TurnFlow(actors("A", "B", "C"))
+    assertEquals(actors("A")[0], flow.next().actor)
+  }
+
+  @Test
+  fun `cycles through actors in order`() {
+    val flow = TurnFlow(actors("A", "B", "C"))
+    assertEquals(listOf("A", "B", "C"), List(3) { flow.next().actor.id.value })
+  }
+
+  @Test
+  fun `wraps around after the last actor`() {
+    val flow = TurnFlow(actors("A", "B", "C"))
+    assertEquals(listOf("A", "B", "C", "A", "B", "C"), List(6) { flow.next().actor.id.value })
+  }
+
+  @Test
+  fun `each turn receives a distinct incremental id`() {
+    val flow = TurnFlow(actors("A", "B", "C"))
+    assertEquals(listOf(0L, 1L, 2L, 3L, 4L), List(5) { flow.next().id.value })
+  }
+
+  @Test
+  fun `single actor repeats itself`() {
+    val flow = TurnFlow(actors("A"))
+    assertEquals(listOf("A", "A", "A"), List(3) { flow.next().actor.id.value })
+  }
+
+  @Test
+  fun `empty actor list is rejected`() {
+    assertFailsWith<IllegalArgumentException> { TurnFlow(emptyList()) }
+  }
+
+  @Test
+  fun `turn exposes the actor from the flow`() {
+    val a = TurnActor(ActorId("A"))
+    val b = TurnActor(ActorId("B"))
+    val flow = TurnFlow(listOf(a, b))
+    val t0 = flow.next()
+    val t1 = flow.next()
+    assertEquals(a, t0.actor)
+    assertEquals(b, t1.actor)
+    assertNotEquals(t0.id, t1.id)
+  }
+
+  @Test
+  fun `flow keeps producing beyond one full cycle`() {
+    val flow = TurnFlow(actors("A", "B", "C"))
+    val seq = List(9) { flow.next().actor.id.value }
+    assertEquals(listOf("A", "B", "C", "A", "B", "C", "A", "B", "C"), seq)
   }
 }

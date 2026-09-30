@@ -36,3 +36,17 @@ class Execution(val context: TurnContext) {
   override fun hashCode(): Int = id.hashCode()
   override fun toString(): String = "Execution(${id.value})"
 }
+
+class TurnFlow(actors: List<TurnActor>) {
+  private val actors = actors.toList()
+  private var index = 0
+  private var nextTurnId = 0L
+
+  init { require(this.actors.isNotEmpty()) { "TurnFlow requires at least one actor" } }
+
+  fun next(): Turn {
+    val actor = actors[index]
+    index = (index + 1) % actors.size
+    return Turn(TurnId(nextTurnId++), actor)
+  }
+}
