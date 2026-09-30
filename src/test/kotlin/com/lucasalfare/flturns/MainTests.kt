@@ -1,5 +1,6 @@
 package com.lucasalfare.flturns
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -874,5 +875,91 @@ class Stage12MultipleDependenciesTest {
     }
     assertEquals("A", engine.executeNextTurn().actor.id.value)
     assertEquals("B", engine.executeNextTurn().actor.id.value)
+  }
+}
+
+class Stage13Test {
+  @Test
+  fun normalExecutionCompletes() = runBlocking {
+    val actor = TurnActor(ActorId("A"))
+    val engine = TurnEngine(TurnFlow(listOf(actor))) { ExecutionResult(42) }
+    val execution = engine.executeNextTurn()
+    assertEquals(ExecutionState.COMPLETED, execution.state)
+    assertEquals(42, execution.result?.value)
+  }
+
+  @Test
+  fun selfCancellationThrowsAndStops() = runBlocking {
+    var afterCancel = false
+    val actor = TurnActor(ActorId("A"))
+    val engine = TurnEngine(TurnFlow(listOf(actor))) { ctx ->
+      ctx.scope?.cancel()
+      afterCancel = true
+      ExecutionResult(1)
+    }
+    assertFailsWith<CancellationException> { engine.executeNextTurn() }
+    assertFalse(afterCancel)
+  }
+
+  @Test
+  fun childCancellationPropagatesToParent() = runBlocking {
+    var parentAfter = false
+    val parentActor = TurnActor(ActorId("A"))
+    val childActor = TurnActor(ActorId("B"))
+    val engine = TurnEngine(TurnFlow(listOf(parentActor))) { ctx ->
+      if (ctx.actor == parentActor) {
+        ctx.scope?.execute(childActor)
+        parentAfter = true
+        ExecutionResult(1)
+      } else {
+        ctx.scope?.cancel()
+        ExecutionResult(2)
+      }
+    }
+    assertFailsWith<CancellationException> { engine.executeNextTurn() }
+    assertFalse(parentAfter)
+  }
+
+  @Test
+  fun childFailurePropagatesToParent() = runBlocking {
+    var parentAfter = false
+    val parentActor = TurnActor(ActorId("A"))
+    val childActor = TurnActor(ActorId("B"))
+    val boom = RuntimeException("boom")
+    val engine = TurnEngine(TurnFlow(listOf(parentActor))) { ctx ->
+      if (ctx.actor == parentActor) {
+        ctx.scope?.execute(childActor)
+        parentAfter = true
+        ExecutionResult(1)
+      } else {
+        throw boom
+      }
+    }
+    val thrown = assertFailsWith<RuntimeException> { engine.executeNextTurn() }
+    assertEquals(boom, thrown)
+    assertFalse(parentAfter)
+  }
+
+  @Test
+  fun caughtChildFailureStillFailsParent() = runBlocking {
+    val parentActor = TurnActor(ActorId("A"))
+    val childActor = TurnActor(ActorId("B"))
+    val boom = RuntimeException("boom")
+    var parentContinued = false
+    val engine = TurnEngine(TurnFlow(listOf(parentActor))) { ctx ->
+      if (ctx.actor == parentActor) {
+        try {
+          ctx.scope?.execute(childActor)
+        } catch (e: RuntimeException) {
+        }
+        parentContinued = true
+        ExecutionResult(1)
+      } else {
+        throw boom
+      }
+    }
+    val thrown = assertFailsWith<RuntimeException> { engine.executeNextTurn() }
+    assertEquals(boom, thrown)
+    assertTrue(parentContinued)
   }
 }
