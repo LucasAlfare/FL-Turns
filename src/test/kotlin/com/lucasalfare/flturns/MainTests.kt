@@ -10,6 +10,9 @@ import kotlin.test.assertTrue
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNull
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.yield
+import kotlinx.coroutines.CompletableDeferred
 
 class ActorTests {
 
@@ -299,55 +302,202 @@ class TurnEngineTests {
 }
 
 class TurnRuntimeTests {
-
   private fun actors(vararg names: String) = names.map { TurnActor(ActorId(it)) }
 
   @Test
-  fun `runtime executes turns while active`() = runBlocking {
+  fun `runtime starts idle`() {
+    val engine = TurnEngine(TurnFlow(actors("A"))) { }
+    assertEquals(RuntimeState.IDLE, TurnRuntime(engine).state)
+  }
+
+  @Test
+  fun `runtime executes turns until flow ends`() = runBlocking {
     val flow = TurnFlow(actors("A", "B", "C"))
     val seen = mutableListOf<String>()
-    val engine = TurnEngine(flow) { seen.add(it.actor.id.value) }
-    val runtime = TurnRuntime(engine)
-
-    runtime.run { seen.size < 6 }
-
+    var count = 0
+    val engine = TurnEngine(flow) {
+      seen += it.actor.id.value
+      count++
+      if (count >= 6) FlowDecision.End else FlowDecision.Continue
+    }
+    TurnRuntime(engine).start()
     assertEquals(listOf("A", "B", "C", "A", "B", "C"), seen)
   }
 
   @Test
-  fun `runtime does not execute when inactive`() = runBlocking {
-    val flow = TurnFlow(actors("A", "B", "C"))
-    val seen = mutableListOf<String>()
-    val engine = TurnEngine(flow) { seen.add(it.actor.id.value) }
+  fun `runtime becomes finished after flow ends`() = runBlocking {
+    var count = 0
+    val engine = TurnEngine(TurnFlow(actors("A"))) {
+      count++
+      if (count >= 3) FlowDecision.End else FlowDecision.Continue
+    }
     val runtime = TurnRuntime(engine)
-
-    runtime.run { false }
-
-    assertTrue(seen.isEmpty())
-  }
-
-  @Test
-  fun `runtime stops once active predicate becomes false`() = runBlocking {
-    val flow = TurnFlow(actors("A", "B", "C"))
-    val seen = mutableListOf<String>()
-    val engine = TurnEngine(flow) { seen.add(it.actor.id.value) }
-    val runtime = TurnRuntime(engine)
-
-    runtime.run { seen.size < 4 }
-
-    assertEquals(listOf("A", "B", "C", "A"), seen)
+    runtime.start()
+    assertEquals(RuntimeState.FINISHED, runtime.state)
   }
 
   @Test
   fun `runtime delegates each iteration to engine`() = runBlocking {
+    var count = 0
     val flow = TurnFlow(actors("A"))
     val seen = mutableListOf<TurnId>()
-    val engine = TurnEngine(flow) { seen.add(it.turnId) }
-    val runtime = TurnRuntime(engine)
-
-    runtime.run { seen.size < 3 }
-
+    val engine = TurnEngine(flow) {
+      seen += it.turnId
+      count++
+      if (count >= 3) FlowDecision.End else FlowDecision.Continue
+    }
+    TurnRuntime(engine).start()
     assertEquals(listOf(TurnId(0L), TurnId(1L), TurnId(2L)), seen)
+  }
+}
+
+class Stage15Tests {
+  private fun actors(vararg names: String) = names.map { TurnActor(ActorId(it)) }
+  private fun engineOf(block: suspend (TurnContext) -> Any? = { FlowDecision.End }): TurnEngine =
+    TurnEngine(TurnFlow(actors("A")), handler = block)
+
+  @Test
+  fun `initial state is IDLE`() {
+    assertEquals(RuntimeState.IDLE, TurnRuntime(engineOf()).state)
+  }
+
+  @Test
+  fun `pause resume stop are noop from IDLE`() {
+    val runtime = TurnRuntime(engineOf())
+    runtime.pause(); assertEquals(RuntimeState.IDLE, runtime.state)
+    runtime.resume(); assertEquals(RuntimeState.IDLE, runtime.state)
+    runtime.stop(); assertEquals(RuntimeState.IDLE, runtime.state)
+  }
+
+  @Test
+  fun `pause from RUNNING sets PAUSED`() = runBlocking {
+    val engine = TurnEngine(TurnFlow(actors("A"))) { }
+    val runtime = TurnRuntime(engine)
+    val job = launch { runtime.start() }
+    yield()
+    assertEquals(RuntimeState.RUNNING, runtime.state)
+    runtime.pause()
+    assertEquals(RuntimeState.PAUSED, runtime.state)
+    runtime.stop()
+    job.join()
+  }
+
+  @Test
+  fun `resume from PAUSED returns to RUNNING`() = runBlocking {
+    val engine = TurnEngine(TurnFlow(actors("A"))) { }
+    val runtime = TurnRuntime(engine)
+    val job = launch { runtime.start() }
+    yield()
+    runtime.pause()
+    yield()
+    runtime.resume()
+    assertEquals(RuntimeState.RUNNING, runtime.state)
+    runtime.stop()
+    job.join()
+  }
+
+  @Test
+  fun `stop from RUNNING sets FINISHED`() = runBlocking {
+    val engine = TurnEngine(TurnFlow(actors("A"))) { }
+    val runtime = TurnRuntime(engine)
+    val job = launch { runtime.start() }
+    yield()
+    runtime.stop()
+    job.join()
+    assertEquals(RuntimeState.FINISHED, runtime.state)
+  }
+
+  @Test
+  fun `pause is noop when already PAUSED`() = runBlocking {
+    val engine = TurnEngine(TurnFlow(actors("A"))) { }
+    val runtime = TurnRuntime(engine)
+    val job = launch { runtime.start() }
+    yield()
+    runtime.pause()
+    runtime.pause()
+    assertEquals(RuntimeState.PAUSED, runtime.state)
+    runtime.stop()
+    job.join()
+  }
+
+  @Test
+  fun `resume is noop when RUNNING`() = runBlocking {
+    val engine = TurnEngine(TurnFlow(actors("A"))) { }
+    val runtime = TurnRuntime(engine)
+    val job = launch { runtime.start() }
+    yield()
+    runtime.resume()
+    assertEquals(RuntimeState.RUNNING, runtime.state)
+    runtime.stop()
+    job.join()
+  }
+
+  @Test
+  fun `start from RUNNING fails`() = runBlocking {
+    val engine = TurnEngine(TurnFlow(actors("A"))) { }
+    val runtime = TurnRuntime(engine)
+    val job = launch { runtime.start() }
+    yield()
+    assertFailsWith<IllegalStateException> { runtime.start() }
+    runtime.stop()
+    job.join()
+  }
+
+  @Test
+  fun `pause prevents new root turns`() = runBlocking {
+    val seen = mutableListOf<String>()
+    val engine = TurnEngine(TurnFlow(actors("A"))) { seen += "A" }
+    val runtime = TurnRuntime(engine)
+    val job = launch { runtime.start() }
+    yield()
+    runtime.pause()
+    yield(); yield(); yield()
+    val snapshot = seen.size
+    yield(); yield(); yield()
+    assertEquals(snapshot, seen.size)
+    runtime.stop()
+    job.join()
+  }
+
+  @Test
+  fun `resume continues execution after pause`() = runBlocking {
+    val seen = mutableListOf<String>()
+    val engine = TurnEngine(TurnFlow(actors("A"))) { seen += "A" }
+    val runtime = TurnRuntime(engine)
+    val job = launch { runtime.start() }
+    yield()
+    runtime.pause()
+    yield(); yield(); yield()
+    val pausedCount = seen.size
+    runtime.resume()
+    yield(); yield(); yield()
+    assertTrue(seen.size > pausedCount)
+    runtime.stop()
+    job.join()
+  }
+
+  @Test
+  fun `stop does not interrupt execution in progress`() = runBlocking {
+    val events = mutableListOf<String>()
+    val gate = CompletableDeferred<Unit>()
+    val engine = TurnEngine(TurnFlow(actors("A"))) {
+      events += "A:start"
+      gate.await()
+      events += "A:end"
+      FlowDecision.End
+    }
+    val runtime = TurnRuntime(engine)
+    val job = launch { runtime.start() }
+    yield(); yield()
+    assertTrue(events.contains("A:start"))
+    runtime.stop()
+    yield(); yield()
+    assertFalse(events.contains("A:end"))
+    gate.complete(Unit)
+    yield(); yield(); yield()
+    assertTrue(events.contains("A:end"))
+    job.join()
+    assertEquals(RuntimeState.FINISHED, runtime.state)
   }
 }
 

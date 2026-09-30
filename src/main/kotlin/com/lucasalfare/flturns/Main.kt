@@ -1,6 +1,7 @@
 package com.lucasalfare.flturns
 
 import kotlin.coroutines.cancellation.CancellationException
+import kotlinx.coroutines.yield
 
 @JvmInline
 value class ActorId(val value: String)
@@ -271,8 +272,34 @@ class TurnEngine(
   }
 }
 
+enum class RuntimeState { IDLE, RUNNING, PAUSED, FINISHED }
+
 class TurnRuntime(private val engine: TurnEngine) {
-  suspend fun run(isRunning: () -> Boolean) {
-    while (isRunning()) engine.executeNextTurn()
+  var state: RuntimeState = RuntimeState.IDLE
+    private set
+
+  suspend fun start() {
+    check(state == RuntimeState.IDLE) { "TurnRuntime cannot start from $state" }
+    state = RuntimeState.RUNNING
+    while (state == RuntimeState.RUNNING || state == RuntimeState.PAUSED) {
+      yield()
+      if (state == RuntimeState.PAUSED) continue
+      if (engine.isFlowEnded()) {
+        state = RuntimeState.FINISHED; continue
+      }
+      engine.executeNextTurn()
+    }
+  }
+
+  fun pause() {
+    if (state == RuntimeState.RUNNING) state = RuntimeState.PAUSED
+  }
+
+  fun resume() {
+    if (state == RuntimeState.PAUSED) state = RuntimeState.RUNNING
+  }
+
+  fun stop() {
+    if (state == RuntimeState.RUNNING || state == RuntimeState.PAUSED) state = RuntimeState.FINISHED
   }
 }
