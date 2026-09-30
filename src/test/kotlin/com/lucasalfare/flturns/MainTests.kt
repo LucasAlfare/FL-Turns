@@ -482,3 +482,44 @@ class ExecutionScopeTests {
     assertEquals(ExecutionId(1L), childId)
   }
 }
+
+class Stage8Test {
+  @Test
+  fun arbitraryNestedExecutionsResolveBottomUp() = runBlocking {
+    val a = TurnActor(ActorId("A"))
+    val b = TurnActor(ActorId("B"))
+    val c = TurnActor(ActorId("C"))
+    val visited = mutableListOf<String>()
+    val completed = mutableListOf<String>()
+    val engine = TurnEngine(TurnFlow(listOf(a))) { ctx ->
+      val id = ctx.actor.id.value
+      visited += "$id:${ctx.depth}"
+      val result = when (ctx.depth) {
+        0 -> ctx.scope!!.execute(b)
+        1 -> ctx.scope!!.execute(a)
+        2 -> ctx.scope!!.execute(c)
+        3 -> ctx.scope!!.execute(b)
+        else -> ExecutionResult(id)
+      }
+      completed += id
+      result
+    }
+    val root = engine.executeNextTurn()
+    assertEquals(listOf("A:0", "B:1", "A:2", "C:3", "B:4"), visited)
+    assertEquals(listOf("B", "C", "A", "B", "A"), completed)
+    assertEquals("B", root.result?.value)
+  }
+
+  @Test
+  fun supportsArbitraryExecutionDepth() = runBlocking {
+    val a = TurnActor(ActorId("A"))
+    val visited = mutableListOf<Int>()
+    val engine = TurnEngine(TurnFlow(listOf(a))) { ctx ->
+      visited += ctx.depth
+      if (ctx.depth < 20) ctx.scope!!.execute(a) else ExecutionResult(ctx.depth)
+    }
+    val root = engine.executeNextTurn()
+    assertEquals((0..20).toList(), visited)
+    assertEquals(20, root.result?.value)
+  }
+}
