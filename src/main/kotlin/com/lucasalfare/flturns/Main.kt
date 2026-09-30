@@ -3,25 +3,32 @@ package com.lucasalfare.flturns
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.yield
 
+/** Stable identity for a [TurnActor]. */
 @JvmInline
 value class ActorId(val value: String)
 
+/** Entity eligible to receive turns. The core knows only its identity. */
 class TurnActor(val id: ActorId) {
   override fun equals(other: Any?): Boolean = other is TurnActor && other.id == id
   override fun hashCode(): Int = id.hashCode()
   override fun toString(): String = "TurnActor(${id.value})"
 }
 
+/** Monotonic identity of a normal turn opportunity. */
 @JvmInline
 value class TurnId(val value: Long)
 
+/** Monotonic identity of a concrete execution. */
 @JvmInline
 value class ExecutionId(val value: Long)
 
+/** Opaque container for application-defined execution data. */
 class ExecutionResult<out T>(val value: T)
 
+/** A normal turn opportunity: an actor and its turn id. */
 data class Turn(val id: TurnId, val actor: TurnActor)
 
+/** Instruction returned by an execution to reshape the normal flow. */
 sealed class FlowDecision {
   object Continue : FlowDecision()
   object Repeat : FlowDecision()
@@ -31,8 +38,10 @@ sealed class FlowDecision {
   object End : FlowDecision()
 }
 
+/** Lifecycle state of a single [Execution]. */
 enum class ExecutionState { RUNNING, SUSPENDED, COMPLETED, FAILED, CANCELLED }
 
+/** Handle exposed to a handler to spawn child executions. */
 class ExecutionScope internal constructor(private val engine: TurnEngine) {
   private var parent: Execution? = null
   internal fun attach(execution: Execution) {
@@ -61,6 +70,7 @@ class ExecutionScope internal constructor(private val engine: TurnEngine) {
   }
 }
 
+/** Immutable data describing the current execution handed to a handler. */
 data class TurnContext(
   val actor: TurnActor,
   val turnId: TurnId,
@@ -70,13 +80,16 @@ data class TurnContext(
   val scope: ExecutionScope? = null
 )
 
-class Execution(val context: TurnContext) {
+/** Read-only view of a concrete execution tracked by the [TurnEngine]. */
+class Execution internal constructor(val context: TurnContext) {
   var result: ExecutionResult<*>? = null
+    private set
   var state: ExecutionState = ExecutionState.RUNNING
     internal set
   var failure: Throwable? = null
     internal set
   internal val children = mutableListOf<Execution>()
+
   val id: ExecutionId get() = context.executionId
   val actor: TurnActor get() = context.actor
   val turnId: TurnId get() = context.turnId
@@ -91,7 +104,7 @@ class Execution(val context: TurnContext) {
     children -= child
   }
 
-  fun cancel() {
+  internal fun cancel() {
     if (state == ExecutionState.COMPLETED || state == ExecutionState.FAILED || state == ExecutionState.CANCELLED) return
     state = ExecutionState.CANCELLED
     children.forEach { it.cancel() }
@@ -123,6 +136,7 @@ class Execution(val context: TurnContext) {
   override fun toString(): String = "Execution(${id.value})"
 }
 
+/** Circular sequence of normal turn opportunities. Advanced only by the [TurnEngine]. */
 class TurnFlow(actors: List<TurnActor>) {
   private val actors = actors.toMutableList()
   private var index = 0
@@ -134,7 +148,7 @@ class TurnFlow(actors: List<TurnActor>) {
     require(this.actors.isNotEmpty()) { "TurnFlow requires at least one actor" }
   }
 
-  fun next(): Turn {
+  internal fun next(): Turn {
     check(!ended) { "TurnFlow has ended" }
     lastIndex = index
     val actor = actors[index]
@@ -142,7 +156,7 @@ class TurnFlow(actors: List<TurnActor>) {
     return Turn(TurnId(nextTurnId++), actor)
   }
 
-  fun isEnded(): Boolean = ended
+  internal fun isEnded(): Boolean = ended
 
   internal fun apply(decision: FlowDecision) {
     when (decision) {
@@ -161,11 +175,13 @@ class TurnFlow(actors: List<TurnActor>) {
   }
 }
 
+/** Thrown when an execution requests a child beyond the configured maximum depth. */
 class MaximumExecutionDepthExceededException(
   val maximumExecutionDepth: Int,
   val attemptedDepth: Int
 ) : IllegalStateException("Maximum execution depth exceeded: maximum=$maximumExecutionDepth attempted=$attemptedDepth")
 
+/** Events published by the engine and runtime for observability. */
 sealed class TurnEvent {
   data class TurnStarted(val turn: Turn, val executionId: ExecutionId) : TurnEvent()
   data class ExecutionStarted(
@@ -183,10 +199,12 @@ sealed class TurnEvent {
   data class RuntimeStateChanged(val from: RuntimeState, val to: RuntimeState) : TurnEvent()
 }
 
+/** Consumer of [TurnEvent]s. */
 fun interface TurnEventSink {
   fun onEvent(event: TurnEvent)
 }
 
+/** Immutable snapshot of the mechanism's observable state. */
 data class TurnSnapshot(
   val currentTurn: Turn?,
   val currentActor: TurnActor?,
@@ -197,6 +215,7 @@ data class TurnSnapshot(
   val runtimeState: RuntimeState?
 )
 
+/** Orchestrates the normal flow and the execution tree without gameplay knowledge. */
 class TurnEngine(
   private val flow: TurnFlow,
   private val canExecute: (TurnActor, TurnContext) -> Boolean = { _, _ -> true },
@@ -323,8 +342,10 @@ class TurnEngine(
   }
 }
 
+/** Lifecycle states of [TurnRuntime]. */
 enum class RuntimeState { IDLE, RUNNING, PAUSED, FINISHED }
 
+/** Drives the engine continuously until the flow ends or it is stopped. */
 class TurnRuntime(
   private val engine: TurnEngine,
   private val events: TurnEventSink = TurnEventSink {}

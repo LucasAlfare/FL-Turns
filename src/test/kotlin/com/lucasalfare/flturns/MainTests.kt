@@ -1514,3 +1514,83 @@ class DummyGameTest {
     assertEquals(listOf("A"), game.log)
   }
 }
+
+class Stage18ApiSurfaceTest {
+  private val a = TurnActor(ActorId("A"))
+  private val b = TurnActor(ActorId("B"))
+
+  @Test
+  fun runtimeSnapshotStartsIdle() {
+    val engine = TurnEngine(TurnFlow(listOf(a, b))) { ExecutionResult(Unit) }
+    val runtime = TurnRuntime(engine)
+    val snap = runtime.snapshot()
+    assertEquals(RuntimeState.IDLE, snap.runtimeState)
+    assertFalse(snap.flowEnded)
+    assertNull(snap.currentTurn)
+    assertEquals(0, snap.depth)
+    assertTrue(snap.pendingExecutions.isEmpty())
+  }
+
+  @Test
+  fun executionViewIsReadOnlyAfterCompletion(): Unit = runBlocking {
+    lateinit var ctx: TurnContext
+    val engine = TurnEngine(TurnFlow(listOf(a, b))) { c -> ctx = c; ExecutionResult(42) }
+    val exec = engine.executeNextTurn()
+    assertEquals(ExecutionState.COMPLETED, exec.state)
+    assertEquals(42, exec.result?.value)
+    assertEquals(a, exec.actor)
+    assertEquals(0, exec.depth)
+    assertNull(exec.parent)
+    assertEquals(exec.id, ctx.executionId)
+    assertEquals(a, ctx.actor)
+    assertEquals(0, ctx.depth)
+    assertNull(ctx.parent)
+    assertNotNull(ctx.scope)
+  }
+
+  @Test
+  fun runtimeFinishesWhenFlowEnds() = runBlocking {
+    val engine = TurnEngine(TurnFlow(listOf(a))) { FlowDecision.End }
+    val runtime = TurnRuntime(engine)
+    runtime.start()
+    assertEquals(RuntimeState.FINISHED, runtime.state)
+    assertTrue(engine.isFlowEnded())
+  }
+
+  @Test
+  fun maximumExecutionDepthIsEnforced(): Unit = runBlocking {
+    val engine = TurnEngine(
+      flow = TurnFlow(listOf(a)),
+      handler = { ctx -> ctx.scope!!.execute(a); ExecutionResult(ctx.depth) },
+      maximumExecutionDepth = 1
+    )
+    assertFailsWith<MaximumExecutionDepthExceededException> { engine.executeNextTurn() }
+  }
+
+  @Test
+  fun childExecutionDoesNotAdvanceNormalFlow() = runBlocking {
+    val log = mutableListOf<String>()
+    val engine = TurnEngine(TurnFlow(listOf(a, b))) { ctx ->
+      log += "${ctx.actor.id.value}:${ctx.depth}"
+      if (ctx.actor == a && ctx.depth == 0) ctx.scope!!.execute(b)
+      ExecutionResult(Unit)
+    }
+    val root = engine.executeNextTurn()
+    assertEquals(a, root.actor)
+    assertEquals(listOf("A:0", "B:1"), log)
+    val next = engine.executeNextTurn()
+    assertEquals(b, next.actor)
+    assertEquals(0, next.depth)
+  }
+
+  @Test
+  fun eventsExposeExecutionLifecycle() = runBlocking {
+    val seen = mutableListOf<TurnEvent>()
+    val engine =
+      TurnEngine(TurnFlow(listOf(a)), handler = { ExecutionResult(1) }, events = TurnEventSink { seen += it })
+    engine.executeNextTurn()
+    assertTrue(seen.any { it is TurnEvent.TurnStarted })
+    assertTrue(seen.any { it is TurnEvent.ExecutionStarted })
+    assertTrue(seen.any { it is TurnEvent.ExecutionCompleted })
+  }
+}
