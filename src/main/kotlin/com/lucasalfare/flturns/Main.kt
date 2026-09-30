@@ -15,6 +15,8 @@ value class TurnId(val value: Long)
 @JvmInline
 value class ExecutionId(val value: Long)
 
+class ExecutionResult<out T>(val value: T)
+
 data class Turn(val id: TurnId, val actor: TurnActor)
 
 data class TurnContext(
@@ -26,6 +28,7 @@ data class TurnContext(
 )
 
 class Execution(val context: TurnContext) {
+  var result: ExecutionResult<*>? = null
   val id: ExecutionId get() = context.executionId
   val actor: TurnActor get() = context.actor
   val turnId: TurnId get() = context.turnId
@@ -55,7 +58,7 @@ class TurnFlow(actors: List<TurnActor>) {
 
 class TurnEngine(
   private val flow: TurnFlow,
-  private val handler: suspend (TurnContext) -> Unit
+  private val handler: suspend (TurnContext) -> Any?
 ) {
   private var nextExecutionId = 0L
 
@@ -70,7 +73,8 @@ class TurnEngine(
         parent = null
       )
     )
-    handler(execution.context)
+    val raw = handler(execution.context)
+    execution.result = raw as? ExecutionResult<*> ?: ExecutionResult(raw)
     return execution
   }
 }

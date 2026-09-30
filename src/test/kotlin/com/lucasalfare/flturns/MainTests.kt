@@ -348,3 +348,51 @@ class TurnRuntimeTests {
     assertEquals(listOf(TurnId(0L), TurnId(1L), TurnId(2L)), seen)
   }
 }
+
+class ExecutionResultTests {
+
+  @Test
+  fun `execution result holds value`() {
+    assertEquals(42, ExecutionResult(42).value)
+  }
+
+  @Test
+  fun `execution result can hold arbitrary data`() {
+    val data = listOf("A", 1, true)
+    assertEquals(data, ExecutionResult(data).value)
+  }
+
+  @Test
+  fun `execution produces result consumed by caller`() = runBlocking {
+    val flow = TurnFlow(listOf(TurnActor(ActorId("A"))))
+    val engine = TurnEngine(flow) { 42 }
+    val execution = engine.executeNextTurn()
+    assertEquals(42, execution.result?.value)
+  }
+
+  @Test
+  fun `execution accepts explicit execution result`() = runBlocking {
+    val flow = TurnFlow(listOf(TurnActor(ActorId("A"))))
+    val engine = TurnEngine(flow) { ExecutionResult("done") }
+    val execution = engine.executeNextTurn()
+    assertEquals("done", execution.result?.value)
+  }
+
+  @Test
+  fun `each execution carries its own result`() = runBlocking {
+    val flow = TurnFlow(listOf(TurnActor(ActorId("A")), TurnActor(ActorId("B"))))
+    val engine = TurnEngine(flow) { if (it.actor.id.value == "A") 1 else 2 }
+    val first = engine.executeNextTurn()
+    val second = engine.executeNextTurn()
+    assertEquals(1, first.result?.value)
+    assertEquals(2, second.result?.value)
+  }
+
+  @Test
+  fun `handler can produce null result`() = runBlocking {
+    val flow = TurnFlow(listOf(TurnActor(ActorId("A"))))
+    val engine = TurnEngine(flow) { null }
+    val execution = engine.executeNextTurn()
+    assertNull(execution.result?.value)
+  }
+}
