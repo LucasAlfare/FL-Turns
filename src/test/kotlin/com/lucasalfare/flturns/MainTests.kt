@@ -523,3 +523,122 @@ class Stage8Test {
     assertEquals(20, root.result?.value)
   }
 }
+
+class Stage9Tests {
+  private fun actor(name: String) = TurnActor(ActorId(name))
+
+  @Test
+  fun childExecutionDoesNotAdvanceTurnFlow() = runBlocking {
+    val a = actor("A");
+    val b = actor("B");
+    val c = actor("C")
+    val flow = TurnFlow(listOf(a, b, c))
+    val visited = mutableListOf<String>()
+    val engine = TurnEngine(flow) { ctx ->
+      visited += ctx.actor.id.value
+      if (ctx.actor == a && ctx.depth == 0) ctx.scope!!.execute(c)
+      null
+    }
+    val first = engine.executeNextTurn()
+    val second = engine.executeNextTurn()
+    assertEquals(a, first.actor)
+    assertEquals(b, second.actor)
+    assertEquals(listOf("A", "C", "B"), visited)
+  }
+
+  @Test
+  fun childExecutionDoesNotReplaceNextNormalTurn() = runBlocking {
+    val a = actor("A");
+    val b = actor("B");
+    val c = actor("C")
+    val flow = TurnFlow(listOf(a, b, c))
+    val roots = mutableListOf<String>()
+    val engine = TurnEngine(flow) { ctx ->
+      if (ctx.depth == 0) roots += ctx.actor.id.value
+      if (ctx.actor == a && ctx.depth == 0) ctx.scope!!.execute(c)
+      null
+    }
+    engine.executeNextTurn()
+    engine.executeNextTurn()
+    assertEquals(listOf("A", "B"), roots)
+  }
+
+  @Test
+  fun childSharesParentTurnIdAndDoesNotCreateNewTurn() = runBlocking {
+    val a = actor("A");
+    val b = actor("B")
+    val flow = TurnFlow(listOf(a))
+    var parentTurnId: TurnId? = null
+    var childTurnId: TurnId? = null
+    var childExecutionId: ExecutionId? = null
+    var parentExecutionId: ExecutionId? = null
+    val engine = TurnEngine(flow) { ctx ->
+      if (ctx.actor == a) {
+        parentTurnId = ctx.turnId; parentExecutionId = ctx.executionId
+        ctx.scope!!.execute(b)
+      } else {
+        childTurnId = ctx.turnId; childExecutionId = ctx.executionId
+      }
+      null
+    }
+    engine.executeNextTurn()
+    assertEquals(parentTurnId, childTurnId)
+    assertNotEquals(parentExecutionId, childExecutionId)
+  }
+
+  @Test
+  fun rootTurnCompletesOnlyAfterChildrenResolve() = runBlocking {
+    val a = actor("A");
+    val b = actor("B")
+    val flow = TurnFlow(listOf(a))
+    val events = mutableListOf<String>()
+    val engine = TurnEngine(flow) { ctx ->
+      if (ctx.actor == a) {
+        events += "A:start"
+        ctx.scope!!.execute(b)
+        events += "A:after"
+      } else events += "B:start"
+      null
+    }
+    engine.executeNextTurn()
+    assertEquals(listOf("A:start", "B:start", "A:after"), events)
+  }
+
+  @Test
+  fun parentReceivesChildResultBeforeCompleting() = runBlocking {
+    val a = actor("A");
+    val b = actor("B")
+    val flow = TurnFlow(listOf(a))
+    var received: Any? = null
+    val engine = TurnEngine(flow) { ctx ->
+      if (ctx.actor == a) {
+        val r = ctx.scope!!.execute(b)
+        received = r.value
+      } else ExecutionResult(42)
+    }
+    val root = engine.executeNextTurn()
+    assertEquals(42, received)
+    assertNotEquals(null, root.result)
+  }
+
+  @Test
+  fun nestedExecutionDoesNotConsumeNormalTurnsFromFlow() = runBlocking {
+    val a = actor("A");
+    val b = actor("B");
+    val c = actor("C")
+    val flow = TurnFlow(listOf(a, b, c))
+    val rootTurns = mutableListOf<TurnId>()
+    val engine = TurnEngine(flow) { ctx ->
+      if (ctx.depth == 0) rootTurns += ctx.turnId
+      if (ctx.actor == a && ctx.depth == 0) {
+        ctx.scope!!.execute(c)
+        ctx.scope.execute(c)
+      }
+      null
+    }
+    engine.executeNextTurn()
+    engine.executeNextTurn()
+    engine.executeNextTurn()
+    assertEquals(listOf(TurnId(0), TurnId(1), TurnId(2)), rootTurns)
+  }
+}
