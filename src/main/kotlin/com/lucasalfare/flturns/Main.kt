@@ -74,3 +74,7 @@ class TurnEngine(
     return execution
   }
 }
+
+class TurnRuntime(private val engine: TurnEngine) {
+  suspend fun run(isRunning: () -> Boolean) { while (isRunning()) engine.executeNextTurn() }
+}

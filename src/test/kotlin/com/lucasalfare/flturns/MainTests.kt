@@ -295,3 +295,56 @@ class TurnEngineTests {
     assertEquals(1, value)
   }
 }
+
+class TurnRuntimeTests {
+
+  private fun actors(vararg names: String) = names.map { TurnActor(ActorId(it)) }
+
+  @Test
+  fun `runtime executes turns while active`() = runBlocking {
+    val flow = TurnFlow(actors("A", "B", "C"))
+    val seen = mutableListOf<String>()
+    val engine = TurnEngine(flow) { seen.add(it.actor.id.value) }
+    val runtime = TurnRuntime(engine)
+
+    runtime.run { seen.size < 6 }
+
+    assertEquals(listOf("A", "B", "C", "A", "B", "C"), seen)
+  }
+
+  @Test
+  fun `runtime does not execute when inactive`() = runBlocking {
+    val flow = TurnFlow(actors("A", "B", "C"))
+    val seen = mutableListOf<String>()
+    val engine = TurnEngine(flow) { seen.add(it.actor.id.value) }
+    val runtime = TurnRuntime(engine)
+
+    runtime.run { false }
+
+    assertTrue(seen.isEmpty())
+  }
+
+  @Test
+  fun `runtime stops once active predicate becomes false`() = runBlocking {
+    val flow = TurnFlow(actors("A", "B", "C"))
+    val seen = mutableListOf<String>()
+    val engine = TurnEngine(flow) { seen.add(it.actor.id.value) }
+    val runtime = TurnRuntime(engine)
+
+    runtime.run { seen.size < 4 }
+
+    assertEquals(listOf("A", "B", "C", "A"), seen)
+  }
+
+  @Test
+  fun `runtime delegates each iteration to engine`() = runBlocking {
+    val flow = TurnFlow(actors("A"))
+    val seen = mutableListOf<TurnId>()
+    val engine = TurnEngine(flow) { seen.add(it.turnId) }
+    val runtime = TurnRuntime(engine)
+
+    runtime.run { seen.size < 3 }
+
+    assertEquals(listOf(TurnId(0L), TurnId(1L), TurnId(2L)), seen)
+  }
+}
