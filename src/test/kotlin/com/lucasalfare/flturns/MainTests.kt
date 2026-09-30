@@ -529,8 +529,8 @@ class Stage9Tests {
 
   @Test
   fun childExecutionDoesNotAdvanceTurnFlow() = runBlocking {
-    val a = actor("A");
-    val b = actor("B");
+    val a = actor("A")
+    val b = actor("B")
     val c = actor("C")
     val flow = TurnFlow(listOf(a, b, c))
     val visited = mutableListOf<String>()
@@ -548,8 +548,8 @@ class Stage9Tests {
 
   @Test
   fun childExecutionDoesNotReplaceNextNormalTurn() = runBlocking {
-    val a = actor("A");
-    val b = actor("B");
+    val a = actor("A")
+    val b = actor("B")
     val c = actor("C")
     val flow = TurnFlow(listOf(a, b, c))
     val roots = mutableListOf<String>()
@@ -565,7 +565,7 @@ class Stage9Tests {
 
   @Test
   fun childSharesParentTurnIdAndDoesNotCreateNewTurn() = runBlocking {
-    val a = actor("A");
+    val a = actor("A")
     val b = actor("B")
     val flow = TurnFlow(listOf(a))
     var parentTurnId: TurnId? = null
@@ -588,7 +588,7 @@ class Stage9Tests {
 
   @Test
   fun rootTurnCompletesOnlyAfterChildrenResolve() = runBlocking {
-    val a = actor("A");
+    val a = actor("A")
     val b = actor("B")
     val flow = TurnFlow(listOf(a))
     val events = mutableListOf<String>()
@@ -606,7 +606,7 @@ class Stage9Tests {
 
   @Test
   fun parentReceivesChildResultBeforeCompleting() = runBlocking {
-    val a = actor("A");
+    val a = actor("A")
     val b = actor("B")
     val flow = TurnFlow(listOf(a))
     var received: Any? = null
@@ -623,8 +623,8 @@ class Stage9Tests {
 
   @Test
   fun nestedExecutionDoesNotConsumeNormalTurnsFromFlow() = runBlocking {
-    val a = actor("A");
-    val b = actor("B");
+    val a = actor("A")
+    val b = actor("B")
     val c = actor("C")
     val flow = TurnFlow(listOf(a, b, c))
     val rootTurns = mutableListOf<TurnId>()
