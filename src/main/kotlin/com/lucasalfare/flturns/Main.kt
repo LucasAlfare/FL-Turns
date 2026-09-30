@@ -160,12 +160,22 @@ class TurnFlow(actors: List<TurnActor>) {
   }
 }
 
+class MaximumExecutionDepthExceededException(
+  val maximumExecutionDepth: Int,
+  val attemptedDepth: Int
+) : IllegalStateException("Maximum execution depth exceeded: maximum=$maximumExecutionDepth attempted=$attemptedDepth")
+
 class TurnEngine(
   private val flow: TurnFlow,
   private val canExecute: (TurnActor, TurnContext) -> Boolean = { _, _ -> true },
-  private val handler: suspend (TurnContext) -> Any?
+  private val handler: suspend (TurnContext) -> Any?,
+  private val maximumExecutionDepth: Int = Int.MAX_VALUE
 ) {
   constructor(flow: TurnFlow, handler: suspend (TurnContext) -> Any?) : this(flow, { _, _ -> true }, handler)
+
+  init {
+    require(maximumExecutionDepth >= 0) { "maximumExecutionDepth must be non-negative" }
+  }
 
   private var nextExecutionId = 0L
 
@@ -203,13 +213,18 @@ class TurnEngine(
   internal suspend fun executeChild(parent: Execution, actor: TurnActor): ExecutionResult<*> {
     if (parent.state == ExecutionState.CANCELLED) throw CancellationException("Parent cancelled")
     if (parent.state == ExecutionState.FAILED) throw parent.failure ?: IllegalStateException("Parent failed")
+    val childDepth = parent.depth + 1
+    if (childDepth > maximumExecutionDepth) throw MaximumExecutionDepthExceededException(
+      maximumExecutionDepth,
+      childDepth
+    )
     val scope = ExecutionScope(this)
     val execution = Execution(
       TurnContext(
         actor = actor,
         turnId = parent.turnId,
         executionId = ExecutionId(nextExecutionId++),
-        depth = parent.depth + 1,
+        depth = childDepth,
         parent = parent,
         scope = scope
       )

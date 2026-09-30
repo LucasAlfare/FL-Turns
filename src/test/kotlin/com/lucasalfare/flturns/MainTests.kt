@@ -8,6 +8,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 import kotlin.test.assertFalse
+import kotlin.test.assertIs
 import kotlin.test.assertNull
 
 class ActorTests {
@@ -961,5 +962,91 @@ class Stage13Test {
     val thrown = assertFailsWith<RuntimeException> { engine.executeNextTurn() }
     assertEquals(boom, thrown)
     assertTrue(parentContinued)
+  }
+}
+
+class Stage14Test {
+  private val a = TurnActor(ActorId("A"))
+  private val b = TurnActor(ActorId("B"))
+  private val c = TurnActor(ActorId("C"))
+
+  @Test
+  fun rootTurnIsNotLimitedByMaximumExecutionDepth() = runBlocking {
+    val engine = TurnEngine(
+      TurnFlow(listOf(a)),
+      handler = { ExecutionResult("ok") },
+      maximumExecutionDepth = 0
+    )
+    val execution = engine.executeNextTurn()
+    assertEquals(ExecutionState.COMPLETED, execution.state)
+    assertEquals("ok", execution.result?.value)
+  }
+
+  @Test
+  fun maximumExecutionDepthDoesNotLimitNormalTurns() = runBlocking {
+    val engine = TurnEngine(
+      TurnFlow(listOf(a, b, c)),
+      handler = { ExecutionResult(it.actor.id.value) },
+      maximumExecutionDepth = 0
+    )
+    assertEquals("A", engine.executeNextTurn().result?.value)
+    assertEquals("B", engine.executeNextTurn().result?.value)
+    assertEquals("C", engine.executeNextTurn().result?.value)
+    assertEquals("A", engine.executeNextTurn().result?.value)
+  }
+
+  @Test
+  fun nestedExecutionWithinMaximumDepthRuns() = runBlocking {
+    val depths = mutableListOf<Pair<String, Int>>()
+    val engine = TurnEngine(
+      TurnFlow(listOf(a)),
+      handler = { ctx ->
+        depths += ctx.actor.id.value to ctx.depth
+        if (ctx.actor == a) ctx.scope!!.execute(b) else ExecutionResult("B")
+      },
+      maximumExecutionDepth = 1
+    )
+    val execution = engine.executeNextTurn()
+    assertEquals(listOf("A" to 0, "B" to 1), depths)
+    assertEquals(ExecutionState.COMPLETED, execution.state)
+    assertEquals("B", execution.result?.value)
+  }
+
+  @Test
+  fun nestedExecutionBeyondMaximumDepthFailsControlled(): Unit = runBlocking {
+    val engine = TurnEngine(
+      TurnFlow(listOf(a)),
+      handler = { ctx ->
+        when (ctx.actor) {
+          a -> ctx.scope!!.execute(b)
+          b -> ctx.scope!!.execute(c)
+          else -> ExecutionResult("C")
+        }
+      },
+      maximumExecutionDepth = 1
+    )
+    var error: Throwable? = null
+    try {
+      engine.executeNextTurn()
+    } catch (e: Throwable) {
+      error = e
+    }
+    assertIs<MaximumExecutionDepthExceededException>(error)
+  }
+
+  @Test
+  fun maximumDepthZeroAllowsRootButRejectsChild(): Unit = runBlocking {
+    val engine = TurnEngine(
+      TurnFlow(listOf(a)),
+      handler = { ctx -> ctx.scope!!.execute(b) },
+      maximumExecutionDepth = 0
+    )
+    var error: Throwable? = null
+    try {
+      engine.executeNextTurn()
+    } catch (e: Throwable) {
+      error = e
+    }
+    assertIs<MaximumExecutionDepthExceededException>(error)
   }
 }
