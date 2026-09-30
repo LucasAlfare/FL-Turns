@@ -1,5 +1,6 @@
 package com.lucasalfare.flturns
 
+import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -217,5 +218,80 @@ class TurnFlowTests {
     val flow = TurnFlow(actors("A", "B", "C"))
     val seq = List(9) { flow.next().actor.id.value }
     assertEquals(listOf("A", "B", "C", "A", "B", "C", "A", "B", "C"), seq)
+  }
+}
+
+class TurnEngineTests {
+
+  private fun actors(vararg names: String) = names.map { TurnActor(ActorId(it)) }
+
+  @Test
+  fun `executes handler for the next turn`() = runBlocking {
+    val flow = TurnFlow(actors("A", "B", "C"))
+    var seen: TurnContext? = null
+    val engine = TurnEngine(flow) { seen = it }
+
+    val execution = engine.executeNextTurn()
+
+    assertEquals("A", seen?.actor?.id?.value)
+    assertEquals(TurnId(0L), seen?.turnId)
+    assertEquals(ExecutionId(0L), seen?.executionId)
+    assertEquals(0, seen?.depth)
+    assertNull(seen?.parent)
+    assertEquals(ExecutionId(0L), execution.id)
+    assertEquals("A", execution.actor.id.value)
+  }
+
+  @Test
+  fun `returns to engine after handler completes`() = runBlocking {
+    val flow = TurnFlow(actors("A"))
+    var completed = false
+    val engine = TurnEngine(flow) { completed = true }
+
+    engine.executeNextTurn()
+
+    assertTrue(completed)
+  }
+
+  @Test
+  fun `creates a new root execution per turn with incremental ids`() = runBlocking {
+    val flow = TurnFlow(actors("A", "B", "C"))
+    val contexts = mutableListOf<TurnContext>()
+    val engine = TurnEngine(flow) { contexts.add(it) }
+
+    val first = engine.executeNextTurn()
+    val second = engine.executeNextTurn()
+    val third = engine.executeNextTurn()
+
+    assertEquals(listOf(ExecutionId(0L), ExecutionId(1L), ExecutionId(2L)), contexts.map { it.executionId })
+    assertEquals(listOf(0, 0, 0), contexts.map { it.depth })
+    assertTrue(contexts.all { it.parent == null })
+    assertEquals(listOf("A", "B", "C"), contexts.map { it.actor.id.value })
+    assertEquals(listOf(TurnId(0L), TurnId(1L), TurnId(2L)), contexts.map { it.turnId })
+    assertEquals(ExecutionId(0L), first.id)
+    assertEquals(ExecutionId(1L), second.id)
+    assertEquals(ExecutionId(2L), third.id)
+  }
+
+  @Test
+  fun `handler receives actor from flow sequence`() = runBlocking {
+    val flow = TurnFlow(actors("A", "B", "C"))
+    val seen = mutableListOf<String>()
+    val engine = TurnEngine(flow) { seen.add(it.actor.id.value) }
+
+    repeat(6) { engine.executeNextTurn() }
+
+    assertEquals(listOf("A", "B", "C", "A", "B", "C"), seen)
+  }
+
+  @Test
+  fun `suspend handler is awaited before returning`() = runBlocking {
+    val flow = TurnFlow(actors("A"))
+    var value = 0
+    val engine = TurnEngine(flow) { value = 1 }
+
+    engine.executeNextTurn()
+
+    assertEquals(1, value)
   }
 }

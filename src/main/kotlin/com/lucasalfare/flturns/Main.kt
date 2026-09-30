@@ -42,11 +42,35 @@ class TurnFlow(actors: List<TurnActor>) {
   private var index = 0
   private var nextTurnId = 0L
 
-  init { require(this.actors.isNotEmpty()) { "TurnFlow requires at least one actor" } }
+  init {
+    require(this.actors.isNotEmpty()) { "TurnFlow requires at least one actor" }
+  }
 
   fun next(): Turn {
     val actor = actors[index]
     index = (index + 1) % actors.size
     return Turn(TurnId(nextTurnId++), actor)
+  }
+}
+
+class TurnEngine(
+  private val flow: TurnFlow,
+  private val handler: suspend (TurnContext) -> Unit
+) {
+  private var nextExecutionId = 0L
+
+  suspend fun executeNextTurn(): Execution {
+    val turn = flow.next()
+    val execution = Execution(
+      TurnContext(
+        actor = turn.actor,
+        turnId = turn.id,
+        executionId = ExecutionId(nextExecutionId++),
+        depth = 0,
+        parent = null
+      )
+    )
+    handler(execution.context)
+    return execution
   }
 }
