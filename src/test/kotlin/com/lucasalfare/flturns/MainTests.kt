@@ -642,3 +642,110 @@ class Stage9Tests {
     assertEquals(listOf(TurnId(0), TurnId(1), TurnId(2)), rootTurns)
   }
 }
+
+class FlowDecisionTest {
+  private val a = TurnActor(ActorId("A"))
+  private val b = TurnActor(ActorId("B"))
+  private val c = TurnActor(ActorId("C"))
+  private val d = TurnActor(ActorId("D"))
+
+  private fun flow() = TurnFlow(listOf(a, b, c))
+
+  @Test
+  fun continueKeepsNormalFlow() = runBlocking {
+    val engine = TurnEngine(flow()) { FlowDecision.Continue }
+    val seen = mutableListOf<TurnActor>()
+    repeat(4) { seen += engine.executeNextTurn().actor }
+    assertEquals(listOf(a, b, c, a), seen)
+  }
+
+  @Test
+  fun repeatRepeatsCurrentActor() = runBlocking {
+    var repeated = false
+    val engine = TurnEngine(flow()) { ctx ->
+      if (ctx.actor == a && !repeated) {
+        repeated = true
+        FlowDecision.Repeat
+      } else FlowDecision.Continue
+    }
+    val seen = mutableListOf<TurnActor>()
+    repeat(3) { seen += engine.executeNextTurn().actor }
+    assertEquals(listOf(a, a, b), seen)
+  }
+
+  @Test
+  fun insertAddsActorBeforeNext() = runBlocking {
+    var inserted = false
+    val engine = TurnEngine(flow()) { ctx ->
+      if (ctx.actor == a && !inserted) {
+        inserted = true
+        FlowDecision.Insert(d)
+      } else FlowDecision.Continue
+    }
+    val seen = mutableListOf<TurnActor>()
+    repeat(4) { seen += engine.executeNextTurn().actor }
+    assertEquals(listOf(a, d, b, c), seen)
+  }
+
+  @Test
+  fun skipDiscardsNextActor() = runBlocking {
+    var skipped = false
+    val engine = TurnEngine(flow()) { ctx ->
+      if (ctx.actor == a && !skipped) {
+        skipped = true
+        FlowDecision.Skip
+      } else FlowDecision.Continue
+    }
+    val seen = mutableListOf<TurnActor>()
+    repeat(3) { seen += engine.executeNextTurn().actor }
+    assertEquals(listOf(a, c, a), seen)
+  }
+
+  @Test
+  fun jumpToMovesToActor() = runBlocking {
+    var jumped = false
+    val engine = TurnEngine(flow()) { ctx ->
+      if (ctx.actor == a && !jumped) {
+        jumped = true
+        FlowDecision.JumpTo(c)
+      } else FlowDecision.Continue
+    }
+    val seen = mutableListOf<TurnActor>()
+    repeat(3) { seen += engine.executeNextTurn().actor }
+    assertEquals(listOf(a, c, a), seen)
+  }
+
+  @Test
+  fun jumpToUnknownActorFails() = runBlocking {
+    val engine = TurnEngine(flow()) { ctx ->
+      if (ctx.actor == a) FlowDecision.JumpTo(d) else FlowDecision.Continue
+    }
+    val error = assertFailsWith<IllegalArgumentException> { engine.executeNextTurn() }
+    assertEquals("Actor not found in TurnFlow", error.message)
+  }
+
+  @Test
+  fun endStopsFlow() = runBlocking {
+    val engine = TurnEngine(flow()) { FlowDecision.End }
+    val first = engine.executeNextTurn()
+    assertEquals(a, first.actor)
+    assertTrue(engine.isFlowEnded())
+    val error = assertFailsWith<IllegalStateException> { engine.executeNextTurn() }
+    assertEquals("TurnFlow has ended", error.message)
+  }
+
+  @Test
+  fun childDecisionDoesNotChangeNormalFlow() = runBlocking {
+    val engine = TurnEngine(flow()) { ctx ->
+      if (ctx.depth == 0 && ctx.actor == a) {
+        ctx.scope!!.execute(b)
+        FlowDecision.Continue
+      } else if (ctx.depth == 1 && ctx.actor == b) {
+        FlowDecision.Skip
+      } else FlowDecision.Continue
+    }
+    val seen = mutableListOf<TurnActor>()
+    repeat(3) { seen += engine.executeNextTurn().actor }
+    assertEquals(listOf(a, b, c), seen)
+  }
+}
