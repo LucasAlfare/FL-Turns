@@ -749,3 +749,68 @@ class FlowDecisionTest {
     assertEquals(listOf(a, b, c), seen)
   }
 }
+
+class EligibilityStage11Test {
+  private val a = TurnActor(ActorId("A"))
+  private val b = TurnActor(ActorId("B"))
+  private val c = TurnActor(ActorId("C"))
+
+  @Test
+  fun defaultEligibilityKeepsFlow() = runBlocking {
+    val flow = TurnFlow(listOf(a, b, c))
+    val executed = mutableListOf<String>()
+    val engine = TurnEngine(flow) { executed += it.actor.id.value }
+    engine.executeNextTurn()
+    engine.executeNextTurn()
+    engine.executeNextTurn()
+    assertEquals(listOf("A", "B", "C"), executed)
+  }
+
+  @Test
+  fun ineligibleActorIsSkipped() = runBlocking {
+    val flow = TurnFlow(listOf(a, b, c))
+    val executed = mutableListOf<String>()
+    val engine = TurnEngine(
+      flow = flow,
+      canExecute = { actor, _ -> actor != b },
+      handler = { executed += it.actor.id.value }
+    )
+    engine.executeNextTurn()
+    engine.executeNextTurn()
+    assertEquals(listOf("A", "C"), executed)
+  }
+
+  @Test
+  fun eligibilityReceivesActorAndContext() = runBlocking {
+    val flow = TurnFlow(listOf(a, b))
+    val calls = mutableListOf<Pair<String, TurnId>>()
+    val engine = TurnEngine(
+      flow = flow,
+      canExecute = { actor, context ->
+        calls += actor.id.value to context.turnId
+        actor != b
+      },
+      handler = { }
+    )
+    engine.executeNextTurn()
+    engine.executeNextTurn()
+    assertEquals("A", calls[0].first)
+    assertEquals(TurnId(0), calls[0].second)
+    assertEquals("B", calls[1].first)
+    assertEquals(TurnId(1), calls[1].second)
+  }
+
+  @Test
+  fun multipleIneligibleActorsAreSkipped() = runBlocking {
+    val flow = TurnFlow(listOf(a, b, c))
+    val executed = mutableListOf<String>()
+    val engine = TurnEngine(
+      flow = flow,
+      canExecute = { actor, _ -> actor != b && actor != c },
+      handler = { executed += it.actor.id.value }
+    )
+    engine.executeNextTurn()
+    engine.executeNextTurn()
+    assertEquals(listOf("A", "A"), executed)
+  }
+}

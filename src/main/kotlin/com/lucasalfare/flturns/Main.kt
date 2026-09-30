@@ -100,12 +100,25 @@ class TurnFlow(actors: List<TurnActor>) {
 
 class TurnEngine(
   private val flow: TurnFlow,
+  private val canExecute: (TurnActor, TurnContext) -> Boolean = { _, _ -> true },
   private val handler: suspend (TurnContext) -> Any?
 ) {
+  constructor(flow: TurnFlow, handler: suspend (TurnContext) -> Any?) : this(flow, { _, _ -> true }, handler)
+
   private var nextExecutionId = 0L
 
+  private fun opportunityContext(turn: Turn): TurnContext = TurnContext(
+    actor = turn.actor,
+    turnId = turn.id,
+    executionId = ExecutionId(nextExecutionId),
+    depth = 0,
+    parent = null,
+    scope = null
+  )
+
   suspend fun executeNextTurn(): Execution {
-    val turn = flow.next()
+    var turn = flow.next()
+    while (!canExecute(turn.actor, opportunityContext(turn))) turn = flow.next()
     val scope = ExecutionScope(this)
     val execution = Execution(
       TurnContext(
