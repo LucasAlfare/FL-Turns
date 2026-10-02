@@ -33,7 +33,7 @@ class ExecutionScope internal constructor(private val engine: TurnsEngine) {
     parent = execution
   }
 
-  suspend fun execute(actor: ActorId): Any? {
+  suspend fun execute(actor: ActorId): Execution {
     val current = requireNotNull(parent) { "ExecutionScope is not attached" }
     return engine.executeChild(current, actor)
   }
@@ -45,7 +45,7 @@ data class TurnContext(
   val executionId: ExecutionId,
   val depth: Int,
   val parent: Execution? = null,
-  val scope: ExecutionScope? = null
+  val scope: ExecutionScope
 )
 
 class Execution internal constructor(val context: TurnContext) {
@@ -62,6 +62,7 @@ class Execution internal constructor(val context: TurnContext) {
   val turnId: TurnId get() = context.turnId
   val depth: Int get() = context.depth
   val parent: Execution? get() = context.parent
+  val scope: ExecutionScope get() = context.scope
 
   internal fun attachChild(child: Execution) {
     children += child
@@ -223,11 +224,12 @@ class TurnsEngine(
     currentTurn = turn
     events.onEvent(TurnEvent.TurnStarted(turn, execution.id))
 
-    val result = runExecution(execution) { handler(execution.context) }
+    runExecution(execution)
 
-    if (result is FlowDecision) {
-      flow.apply(result)
-      events.onEvent(TurnEvent.FlowDecisionApplied(result))
+    val decision = execution.result as? FlowDecision
+    if (decision != null) {
+      flow.apply(decision)
+      events.onEvent(TurnEvent.FlowDecisionApplied(decision))
     }
 
     if (flow.isEnded()) events.onEvent(TurnEvent.FlowEnded(turn.id))
@@ -236,7 +238,7 @@ class TurnsEngine(
 
   fun isFlowEnded(): Boolean = flow.isEnded()
 
-  internal suspend fun executeChild(parent: Execution, actor: ActorId): Any? {
+  internal suspend fun executeChild(parent: Execution, actor: ActorId): Execution {
     ensureCanCreateChild(parent)
 
     val execution = createExecution(actor = actor, turnId = parent.turnId, depth = parent.depth + 1, parent = parent)
@@ -245,10 +247,10 @@ class TurnsEngine(
     parent.suspendForChild()
 
     try {
-      val result = runExecution(execution) { handler(execution.context) }
+      runExecution(execution)
       ensureParentCanResume(parent)
       parent.resumeAfterChild()
-      return result
+      return execution
     } catch (e: CancellationException) {
       parent.cancel()
       throw e
@@ -294,10 +296,7 @@ class TurnsEngine(
     if (parent.state == ExecutionState.FAILED) throw parent.failure ?: IllegalStateException("Parent failed")
   }
 
-  private suspend fun runExecution(
-    execution: Execution,
-    block: suspend () -> Any?
-  ): Any? {
+  private suspend fun runExecution(execution: Execution) {
     ensureExecutionCanRun(execution)
     execution.state = ExecutionState.RUNNING
     activeExecutions += execution
@@ -311,7 +310,7 @@ class TurnsEngine(
     )
 
     try {
-      val result = block()
+      val result = handler(execution.context)
       ensureExecutionCompletedNormally(execution)
       execution.complete(result)
 
@@ -321,8 +320,6 @@ class TurnsEngine(
           result = result
         )
       )
-
-      return result
     } catch (e: CancellationException) {
       execution.cancel()
       events.onEvent(TurnEvent.ExecutionCancelled(execution.id))
