@@ -105,7 +105,13 @@ class Execution internal constructor(val context: TurnContext) {
   override fun toString(): String = "Execution(${id.value})"
 }
 
-class TurnsFlow(actors: List<ActorId>) {
+interface TurnFlow {
+  fun next(): Turn
+  fun isEnded(): Boolean
+  fun apply(decision: FlowDecision)
+}
+
+class RoundRobinTurnFlow(actors: List<ActorId>) : TurnFlow {
   private val actors = actors.toMutableList()
   private var index = 0
   private var nextTurnId = 0L
@@ -113,10 +119,10 @@ class TurnsFlow(actors: List<ActorId>) {
   private var ended = false
 
   init {
-    require(actors.isNotEmpty()) { "TurnFlow requires at least one actor" }
+    require(actors.isNotEmpty()) { "RoundRobinTurnFlow requires at least one actor" }
   }
 
-  internal fun next(): Turn {
+  override fun next(): Turn {
     check(!ended) { "TurnFlow has ended" }
     lastIndex = index
     val actor = actors[index]
@@ -124,10 +130,9 @@ class TurnsFlow(actors: List<ActorId>) {
     return Turn(TurnId(nextTurnId++), actor)
   }
 
-  internal fun isEnded(): Boolean =
-    ended
+  override fun isEnded(): Boolean = ended
 
-  internal fun apply(decision: FlowDecision) {
+  override fun apply(decision: FlowDecision) {
     when (decision) {
       FlowDecision.Continue -> Unit
       FlowDecision.Repeat -> index = lastIndex
@@ -182,7 +187,7 @@ data class TurnSnapshot(
 )
 
 class TurnsEngine(
-  private val flow: TurnsFlow,
+  private val flow: TurnFlow,
   private val canExecute: (ActorId, Turn) -> Boolean = { _, _ -> true },
   val handler: suspend (TurnContext) -> Any? = suspend {},
   private val maximumExecutionDepth: Int = Int.MAX_VALUE,
