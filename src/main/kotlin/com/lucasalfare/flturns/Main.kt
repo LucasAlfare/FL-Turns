@@ -125,15 +125,14 @@ class RoundRobinTurnFlow(actors: List<ActorId>) : TurnFlow {
 
   override fun next(isEligible: (Turn) -> Boolean): Turn {
     check(!ended) { "TurnFlow has ended" }
-    val attempts = actors.size
-    repeat(attempts) {
+    repeat(actors.size) {
       lastIndex = index
       val actor = actors[index]
       index = (index + 1) % actors.size
       val turn = Turn(TurnId(nextTurnId++), actor)
       if (isEligible(turn)) return turn
     }
-    throw NoExecutableTurnException(attempts)
+    throw NoExecutableTurnException(actors.size)
   }
 
   override fun isEnded(): Boolean = ended
@@ -162,20 +161,21 @@ class MaximumExecutionDepthExceededException(maximumExecutionDepth: Int, attempt
   IllegalStateException("Maximum execution depth exceeded: maximum=$maximumExecutionDepth attempted=$attemptedDepth")
 
 sealed class TurnEvent {
-  data class TurnStarted(val turn: Turn, val executionId: ExecutionId) : TurnEvent()
+  data class TurnStarted(val turn: Turn) : TurnEvent()
 
   data class ExecutionStarted(
+    val turnId: TurnId,
     val executionId: ExecutionId,
     val actor: ActorId,
     val depth: Int,
     val parentId: ExecutionId?
   ) : TurnEvent()
 
-  data class ExecutionCompleted(val executionId: ExecutionId, val result: Any?) : TurnEvent()
-  data class ExecutionFailed(val executionId: ExecutionId, val failure: Throwable) : TurnEvent()
-  data class ExecutionCancelled(val executionId: ExecutionId) : TurnEvent()
-  data class FlowDecisionApplied(val decision: FlowDecision) : TurnEvent()
-  data class FlowEnded(val turnId: TurnId) : TurnEvent()
+  data class ExecutionCompleted(val turnId: TurnId, val executionId: ExecutionId, val result: Any?) : TurnEvent()
+  data class ExecutionFailed(val turnId: TurnId, val executionId: ExecutionId, val failure: Throwable) : TurnEvent()
+  data class ExecutionCancelled(val turnId: TurnId, val executionId: ExecutionId) : TurnEvent()
+  data class FlowDecisionApplied(val turnId: TurnId, val decision: FlowDecision) : TurnEvent()
+  data class TurnFlowEnded(val turnId: TurnId) : TurnEvent()
   data class RuntimeStateChanged(val from: RuntimeState, val to: RuntimeState) : TurnEvent()
 }
 
@@ -188,7 +188,7 @@ data class TurnSnapshot(
   val currentActor: ActorId?,
   val currentExecutionId: ExecutionId?,
   val depth: Int,
-  val pendingExecutions: List<ExecutionId>,
+  val activeExecutions: List<ExecutionId>,
   val flowEnded: Boolean,
   val runtimeState: RuntimeState?
 )
@@ -215,7 +215,7 @@ class TurnsEngine(
       currentActor = deepest?.actor ?: currentTurn?.actor,
       currentExecutionId = deepest?.id,
       depth = deepest?.depth ?: 0,
-      pendingExecutions = activeExecutions.map(Execution::id),
+      activeExecutions = activeExecutions.map(Execution::id),
       flowEnded = flow.isEnded(),
       runtimeState = null
     )
@@ -223,21 +223,19 @@ class TurnsEngine(
 
   suspend fun executeNextTurn(): Execution {
     val turn = flow.next(isEligible)
-
-    val execution = createExecution(actor = turn.actor, turnId = turn.id, depth = 0, parent = null)
+    val execution = createExecution(turn.actor, turn.id, 0, null)
 
     currentTurn = turn
-    events.onEvent(TurnEvent.TurnStarted(turn, execution.id))
-
+    events.onEvent(TurnEvent.TurnStarted(turn))
     runExecution(execution)
 
     val decision = execution.result as? FlowDecision
     if (decision != null) {
       flow.apply(decision)
-      events.onEvent(TurnEvent.FlowDecisionApplied(decision))
+      events.onEvent(TurnEvent.FlowDecisionApplied(turn.id, decision))
     }
 
-    if (flow.isEnded()) events.onEvent(TurnEvent.FlowEnded(turn.id))
+    if (flow.isEnded()) events.onEvent(TurnEvent.TurnFlowEnded(turn.id))
     return execution
   }
 
@@ -270,7 +268,6 @@ class TurnsEngine(
 
   private fun createExecution(actor: ActorId, turnId: TurnId, depth: Int, parent: Execution?): Execution {
     val scope = ExecutionScope(this)
-
     val execution = Execution(
       TurnContext(
         actor = actor,
@@ -281,7 +278,6 @@ class TurnsEngine(
         scope = scope
       )
     )
-
     scope.attach(execution)
     return execution
   }
@@ -307,6 +303,7 @@ class TurnsEngine(
     activeExecutions += execution
     events.onEvent(
       TurnEvent.ExecutionStarted(
+        turnId = execution.turnId,
         executionId = execution.id,
         actor = execution.actor,
         depth = execution.depth,
@@ -321,17 +318,18 @@ class TurnsEngine(
 
       events.onEvent(
         TurnEvent.ExecutionCompleted(
+          turnId = execution.turnId,
           executionId = execution.id,
           result = result
         )
       )
     } catch (e: CancellationException) {
       execution.cancel()
-      events.onEvent(TurnEvent.ExecutionCancelled(execution.id))
+      events.onEvent(TurnEvent.ExecutionCancelled(turnId = execution.turnId, executionId = execution.id))
       throw e
     } catch (e: Throwable) {
       execution.fail(e)
-      events.onEvent(TurnEvent.ExecutionFailed(execution.id, e))
+      events.onEvent(TurnEvent.ExecutionFailed(turnId = execution.turnId, executionId = execution.id, failure = e))
       throw e
     } finally {
       activeExecutions -= execution
@@ -347,11 +345,8 @@ class TurnsEngine(
   }
 
   private fun ensureExecutionCompletedNormally(execution: Execution) {
-    if (execution.state == ExecutionState.CANCELLED)
-      throw CancellationException("Execution cancelled")
-
-    if (execution.state == ExecutionState.FAILED)
-      throw execution.failure ?: IllegalStateException("Execution failed")
+    if (execution.state == ExecutionState.CANCELLED) throw CancellationException("Execution cancelled")
+    if (execution.state == ExecutionState.FAILED) throw execution.failure ?: IllegalStateException("Execution failed")
   }
 }
 
