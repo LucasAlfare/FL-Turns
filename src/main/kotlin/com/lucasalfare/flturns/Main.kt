@@ -29,6 +29,7 @@ class ExecutionScope internal constructor(private val engine: TurnsEngine) {
   private var parent: Execution? = null
 
   internal fun attach(execution: Execution) {
+    check(parent == null) { "ExecutionScope is already attached" }
     parent = execution
   }
 
@@ -70,32 +71,34 @@ class Execution internal constructor(val context: TurnContext) {
     children -= child
   }
 
-  internal fun cancel() {
-    if (state == ExecutionState.COMPLETED || state == ExecutionState.FAILED || state == ExecutionState.CANCELLED) return
-    state = ExecutionState.CANCELLED
-    children.forEach(Execution::cancel)
-  }
-
-  internal fun fail(t: Throwable) {
-    if (state == ExecutionState.COMPLETED || state == ExecutionState.CANCELLED) return
-    state = ExecutionState.FAILED
-    failure = t
-    children.forEach { it.fail(t) }
-  }
-
-  internal fun complete(result: Any?) {
-    if (state == ExecutionState.CANCELLED || state == ExecutionState.FAILED) return
-    this.result = result
-    state = ExecutionState.COMPLETED
-  }
-
-  internal fun suspend() {
+  internal fun suspendForChild() {
     if (state == ExecutionState.RUNNING) state = ExecutionState.SUSPENDED
   }
 
-  internal fun resume() {
+  internal fun resumeAfterChild() {
     if (state == ExecutionState.SUSPENDED) state = ExecutionState.RUNNING
   }
+
+  internal fun cancel() {
+    if (isTerminal) return
+    state = ExecutionState.CANCELLED
+    children.toList().forEach(Execution::cancel)
+  }
+
+  internal fun fail(t: Throwable) {
+    if (isTerminal) return
+    state = ExecutionState.FAILED
+    failure = t
+    children.toList().forEach { it.fail(t) }
+  }
+
+  internal fun complete(value: Any?) {
+    if (isTerminal) return
+    result = value
+    state = ExecutionState.COMPLETED
+  }
+
+  private val isTerminal: Boolean get() = state == ExecutionState.COMPLETED || state == ExecutionState.FAILED || state == ExecutionState.CANCELLED
 
   override fun equals(other: Any?): Boolean = other is Execution && other.id == id
   override fun hashCode(): Int = id.hashCode()
@@ -121,11 +124,12 @@ class TurnsFlow(actors: List<ActorId>) {
     return Turn(TurnId(nextTurnId++), actor)
   }
 
-  internal fun isEnded(): Boolean = ended
+  internal fun isEnded(): Boolean =
+    ended
 
   internal fun apply(decision: FlowDecision) {
     when (decision) {
-      FlowDecision.Continue -> {}
+      FlowDecision.Continue -> Unit
       FlowDecision.Repeat -> index = lastIndex
       is FlowDecision.Insert -> actors.add(index, decision.actor)
       FlowDecision.Skip -> index = (index + 1) % actors.size
@@ -193,7 +197,7 @@ class TurnsEngine(
   private val activeExecutions = linkedSetOf<Execution>()
 
   fun snapshot(): TurnSnapshot {
-    val deepest = activeExecutions.maxByOrNull { it.depth }
+    val deepest = activeExecutions.maxByOrNull(Execution::depth)
     return TurnSnapshot(
       currentTurn = currentTurn,
       currentActor = deepest?.actor ?: currentTurn?.actor,
@@ -209,20 +213,9 @@ class TurnsEngine(
     var turn = flow.next()
     while (!canExecute(turn.actor, turn)) turn = flow.next()
 
-    val scope = ExecutionScope(this)
-    val execution = Execution(
-      TurnContext(
-        actor = turn.actor,
-        turnId = turn.id,
-        executionId = ExecutionId(nextExecutionId++),
-        depth = 0,
-        parent = null,
-        scope = scope
-      )
-    )
+    val execution = createExecution(actor = turn.actor, turnId = turn.id, depth = 0, parent = null)
 
     currentTurn = turn
-    scope.attach(execution)
     events.onEvent(TurnEvent.TurnStarted(turn, execution.id))
 
     val result = runExecution(execution) { handler(execution.context) }
@@ -239,34 +232,17 @@ class TurnsEngine(
   fun isFlowEnded(): Boolean = flow.isEnded()
 
   internal suspend fun executeChild(parent: Execution, actor: ActorId): Any? {
-    if (parent.state == ExecutionState.CANCELLED) throw CancellationException("Parent cancelled")
-    if (parent.state == ExecutionState.FAILED) throw parent.failure ?: IllegalStateException("Parent failed")
+    ensureCanCreateChild(parent)
 
-    val childDepth = parent.depth + 1
-    if (childDepth > maximumExecutionDepth)
-      throw MaximumExecutionDepthExceededException(maximumExecutionDepth, childDepth)
-
-    val scope = ExecutionScope(this)
-    val execution = Execution(
-      TurnContext(
-        actor = actor,
-        turnId = parent.turnId,
-        executionId = ExecutionId(nextExecutionId++),
-        depth = childDepth,
-        parent = parent,
-        scope = scope
-      )
-    )
+    val execution = createExecution(actor = actor, turnId = parent.turnId, depth = parent.depth + 1, parent = parent)
 
     parent.attachChild(execution)
-    scope.attach(execution)
-    parent.suspend()
+    parent.suspendForChild()
 
     try {
       val result = runExecution(execution) { handler(execution.context) }
-      if (parent.state == ExecutionState.CANCELLED) throw CancellationException("Parent cancelled")
-      if (parent.state == ExecutionState.FAILED) throw parent.failure ?: IllegalStateException("Parent failed")
-      parent.resume()
+      ensureParentCanResume(parent)
+      parent.resumeAfterChild()
       return result
     } catch (e: CancellationException) {
       parent.cancel()
@@ -276,33 +252,72 @@ class TurnsEngine(
       throw e
     } finally {
       parent.detachChild(execution)
-      if (parent.state == ExecutionState.SUSPENDED) parent.resume()
+      if (parent.state == ExecutionState.SUSPENDED) parent.resumeAfterChild()
     }
   }
 
-  private suspend fun runExecution(execution: Execution, block: suspend () -> Any?): Any? {
-    if (execution.state == ExecutionState.CANCELLED) throw CancellationException("Execution cancelled")
-    if (execution.state == ExecutionState.FAILED) throw execution.failure ?: IllegalStateException("Execution failed")
+  private fun createExecution(actor: ActorId, turnId: TurnId, depth: Int, parent: Execution?): Execution {
+    val scope = ExecutionScope(this)
 
+    val execution = Execution(
+      TurnContext(
+        actor = actor,
+        turnId = turnId,
+        executionId = ExecutionId(nextExecutionId++),
+        depth = depth,
+        parent = parent,
+        scope = scope
+      )
+    )
+
+    scope.attach(execution)
+    return execution
+  }
+
+  private fun ensureCanCreateChild(parent: Execution) {
+    if (parent.state == ExecutionState.CANCELLED) throw CancellationException("Parent cancelled")
+    if (parent.state == ExecutionState.FAILED) throw parent.failure ?: IllegalStateException("Parent failed")
+    val attemptedDepth = parent.depth + 1
+    if (attemptedDepth > maximumExecutionDepth) throw MaximumExecutionDepthExceededException(
+      maximumExecutionDepth,
+      attemptedDepth
+    )
+  }
+
+  private fun ensureParentCanResume(parent: Execution) {
+    if (parent.state == ExecutionState.CANCELLED) throw CancellationException("Parent cancelled")
+    if (parent.state == ExecutionState.FAILED) throw parent.failure ?: IllegalStateException("Parent failed")
+  }
+
+  private suspend fun runExecution(
+    execution: Execution,
+    block: suspend () -> Any?
+  ): Any? {
+    ensureExecutionCanRun(execution)
     execution.state = ExecutionState.RUNNING
     activeExecutions += execution
     events.onEvent(
       TurnEvent.ExecutionStarted(
-        execution.id,
-        execution.actor,
-        execution.depth,
-        execution.parent?.id
+        executionId = execution.id,
+        actor = execution.actor,
+        depth = execution.depth,
+        parentId = execution.parent?.id
       )
     )
 
     try {
-      val raw = block()
-      if (execution.state == ExecutionState.CANCELLED) throw CancellationException("Execution cancelled")
-      if (execution.state == ExecutionState.FAILED) throw execution.failure ?: IllegalStateException("Execution failed")
+      val result = block()
+      ensureExecutionCompletedNormally(execution)
+      execution.complete(result)
 
-      execution.complete(raw)
-      events.onEvent(TurnEvent.ExecutionCompleted(execution.id, raw))
-      return raw
+      events.onEvent(
+        TurnEvent.ExecutionCompleted(
+          executionId = execution.id,
+          result = result
+        )
+      )
+
+      return result
     } catch (e: CancellationException) {
       execution.cancel()
       events.onEvent(TurnEvent.ExecutionCancelled(execution.id))
@@ -315,9 +330,30 @@ class TurnsEngine(
       activeExecutions -= execution
     }
   }
+
+  private fun ensureExecutionCanRun(execution: Execution) {
+    if (execution.state == ExecutionState.CANCELLED)
+      throw CancellationException("Execution cancelled")
+
+    if (execution.state == ExecutionState.FAILED)
+      throw execution.failure ?: IllegalStateException("Execution failed")
+  }
+
+  private fun ensureExecutionCompletedNormally(execution: Execution) {
+    if (execution.state == ExecutionState.CANCELLED)
+      throw CancellationException("Execution cancelled")
+
+    if (execution.state == ExecutionState.FAILED)
+      throw execution.failure ?: IllegalStateException("Execution failed")
+  }
 }
 
-enum class RuntimeState { IDLE, RUNNING, PAUSED, FINISHED }
+enum class RuntimeState {
+  IDLE,
+  RUNNING,
+  PAUSED,
+  FINISHED
+}
 
 class TurnsRuntime(
   private val engine: TurnsEngine,
