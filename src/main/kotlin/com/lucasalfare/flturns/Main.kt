@@ -107,7 +107,7 @@ class Execution internal constructor(val context: TurnContext) {
 }
 
 interface TurnFlow {
-  fun next(): Turn
+  fun next(isEligible: (Turn) -> Boolean = { true }): Turn
   fun isEnded(): Boolean
   fun apply(decision: FlowDecision)
 }
@@ -123,12 +123,17 @@ class RoundRobinTurnFlow(actors: List<ActorId>) : TurnFlow {
     require(actors.isNotEmpty()) { "RoundRobinTurnFlow requires at least one actor" }
   }
 
-  override fun next(): Turn {
+  override fun next(isEligible: (Turn) -> Boolean): Turn {
     check(!ended) { "TurnFlow has ended" }
-    lastIndex = index
-    val actor = actors[index]
-    index = (index + 1) % actors.size
-    return Turn(TurnId(nextTurnId++), actor)
+    val attempts = actors.size
+    repeat(attempts) {
+      lastIndex = index
+      val actor = actors[index]
+      index = (index + 1) % actors.size
+      val turn = Turn(TurnId(nextTurnId++), actor)
+      if (isEligible(turn)) return turn
+    }
+    throw NoExecutableTurnException(attempts)
   }
 
   override fun isEnded(): Boolean = ended
@@ -150,10 +155,11 @@ class RoundRobinTurnFlow(actors: List<ActorId>) : TurnFlow {
   }
 }
 
-class MaximumExecutionDepthExceededException(
-  maximumExecutionDepth: Int,
-  attemptedDepth: Int
-) : IllegalStateException("Maximum execution depth exceeded: maximum=$maximumExecutionDepth attempted=$attemptedDepth")
+class NoExecutableTurnException(attempts: Int) :
+  IllegalStateException("No executable turn found after checking $attempts turn opportunities")
+
+class MaximumExecutionDepthExceededException(maximumExecutionDepth: Int, attemptedDepth: Int) :
+  IllegalStateException("Maximum execution depth exceeded: maximum=$maximumExecutionDepth attempted=$attemptedDepth")
 
 sealed class TurnEvent {
   data class TurnStarted(val turn: Turn, val executionId: ExecutionId) : TurnEvent()
@@ -189,7 +195,7 @@ data class TurnSnapshot(
 
 class TurnsEngine(
   private val flow: TurnFlow,
-  private val canExecute: (ActorId, Turn) -> Boolean = { _, _ -> true },
+  private val isEligible: (Turn) -> Boolean = { true },
   val handler: suspend (TurnContext) -> Any? = suspend {},
   private val maximumExecutionDepth: Int = Int.MAX_VALUE,
   private val events: TurnEventSink = TurnEventSink {}
@@ -216,8 +222,7 @@ class TurnsEngine(
   }
 
   suspend fun executeNextTurn(): Execution {
-    var turn = flow.next()
-    while (!canExecute(turn.actor, turn)) turn = flow.next()
+    val turn = flow.next(isEligible)
 
     val execution = createExecution(actor = turn.actor, turnId = turn.id, depth = 0, parent = null)
 
