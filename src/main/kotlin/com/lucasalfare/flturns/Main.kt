@@ -1,3 +1,5 @@
+@file:Suppress("unused")
+
 package com.lucasalfare.flturns
 
 import kotlin.coroutines.cancellation.CancellationException
@@ -189,9 +191,12 @@ data class TurnSnapshot(
   val currentExecutionId: ExecutionId?,
   val depth: Int,
   val activeExecutions: List<ExecutionId>,
-  val flowEnded: Boolean,
-  val runtimeState: RuntimeState?
+  val flowEnded: Boolean
 )
+
+enum class RuntimeState { IDLE, RUNNING, PAUSED, FINISHED }
+
+data class RuntimeSnapshot(val engine: TurnSnapshot, val state: RuntimeState)
 
 class TurnsEngine(
   private val flow: TurnFlow,
@@ -216,8 +221,7 @@ class TurnsEngine(
       currentExecutionId = deepest?.id,
       depth = deepest?.depth ?: 0,
       activeExecutions = activeExecutions.map(Execution::id),
-      flowEnded = flow.isEnded(),
-      runtimeState = null
+      flowEnded = flow.isEnded()
     )
   }
 
@@ -350,13 +354,6 @@ class TurnsEngine(
   }
 }
 
-enum class RuntimeState {
-  IDLE,
-  RUNNING,
-  PAUSED,
-  FINISHED
-}
-
 class TurnsRuntime(
   private val engine: TurnsEngine,
   private val events: TurnEventSink = TurnEventSink {}
@@ -364,7 +361,7 @@ class TurnsRuntime(
   var state: RuntimeState = RuntimeState.IDLE
     private set
 
-  fun snapshot(): TurnSnapshot = engine.snapshot().copy(runtimeState = state)
+  fun snapshot(): RuntimeSnapshot = RuntimeSnapshot(engine = engine.snapshot(), state = state)
 
   private fun transition(next: RuntimeState) {
     if (next == state) return
