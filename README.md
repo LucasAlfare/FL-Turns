@@ -12,7 +12,7 @@
 
 [![Kotlin](https://img.shields.io/badge/Kotlin-100%25-blueviolet?logo=kotlin)](https://kotlinlang.org/)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![JitPack](<JITPACK_BADGE_URL>)](<JITPACK_PROJECT_URL>)
+[![](https://jitpack.io/v/LucasAlfare/FL-Turns.svg)](https://jitpack.io/#LucasAlfare/FL-Turns)
 
 </div>
 
@@ -160,7 +160,7 @@ Then add FL-Turns as a dependency:
 
 ```kotlin
 dependencies {
-    implementation("com.github.<GITHUB_USERNAME>:<REPOSITORY_NAME>:<VERSION>")
+    implementation("com.github.LucasAlfare:FL-Turns:1.0.0")
 }
 ```
 
