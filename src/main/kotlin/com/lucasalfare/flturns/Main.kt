@@ -451,10 +451,7 @@ class Execution internal constructor(val context: TurnContext) {
    * Indicates whether the execution has reached a terminal state.
    */
   private val isTerminal: Boolean
-    get() =
-      state == ExecutionState.COMPLETED ||
-          state == ExecutionState.FAILED ||
-          state == ExecutionState.CANCELLED
+    get() = state == ExecutionState.COMPLETED || state == ExecutionState.FAILED || state == ExecutionState.CANCELLED
 
   /**
    * Executions are identified exclusively by their [ExecutionId].
@@ -462,8 +459,7 @@ class Execution internal constructor(val context: TurnContext) {
    * @param other the object to compare with this execution.
    * @return `true` when both objects represent the same execution identifier.
    */
-  override fun equals(other: Any?): Boolean =
-    other is Execution && other.id == id
+  override fun equals(other: Any?): Boolean = other is Execution && other.id == id
 
   /**
    * Returns the hash code derived from the execution identifier.
@@ -592,8 +588,7 @@ class RoundRobinTurnFlow(
       index = (index + 1) % actors.size
 
       val turn = Turn(
-        TurnId(nextTurnId++),
-        actor
+        TurnId(nextTurnId++), actor
       )
 
       if (isEligible(turn)) {
@@ -632,14 +627,11 @@ class RoundRobinTurnFlow(
     when (decision) {
       FlowDecision.Continue -> Unit
 
-      FlowDecision.Repeat ->
-        index = lastIndex
+      FlowDecision.Repeat -> index = lastIndex
 
-      is FlowDecision.Insert ->
-        actors.add(index, decision.turnActor)
+      is FlowDecision.Insert -> actors.add(index, decision.turnActor)
 
-      FlowDecision.Skip ->
-        index = (index + 1) % actors.size
+      FlowDecision.Skip -> index = (index + 1) % actors.size
 
       is FlowDecision.JumpTo -> {
         val target = actors.indexOf(decision.turnActor)
@@ -651,8 +643,7 @@ class RoundRobinTurnFlow(
         index = target
       }
 
-      FlowDecision.End ->
-        ended = true
+      FlowDecision.End -> ended = true
     }
   }
 }
@@ -679,11 +670,9 @@ class NoExecutableTurnException(attempts: Int) :
  * @param attemptedDepth the depth that the engine attempted to create.
  */
 class MaximumExecutionDepthExceededException(
-  maximumExecutionDepth: Int,
-  attemptedDepth: Int
+  maximumExecutionDepth: Int, attemptedDepth: Int
 ) : IllegalStateException(
-  "Maximum execution depth exceeded: " +
-      "maximum=$maximumExecutionDepth attempted=$attemptedDepth"
+  "Maximum execution depth exceeded: " + "maximum=$maximumExecutionDepth attempted=$attemptedDepth"
 )
 
 /**
@@ -732,9 +721,7 @@ sealed class TurnEvent {
    * @property result the value returned by the execution handler.
    */
   data class ExecutionCompleted(
-    val turnId: TurnId,
-    val executionId: ExecutionId,
-    val result: Any?
+    val turnId: TurnId, val executionId: ExecutionId, val result: Any?
   ) : TurnEvent()
 
   /**
@@ -745,9 +732,7 @@ sealed class TurnEvent {
    * @property failure the exception that caused the failure.
    */
   data class ExecutionFailed(
-    val turnId: TurnId,
-    val executionId: ExecutionId,
-    val failure: Throwable
+    val turnId: TurnId, val executionId: ExecutionId, val failure: Throwable
   ) : TurnEvent()
 
   /**
@@ -757,8 +742,7 @@ sealed class TurnEvent {
    * @property executionId the cancelled execution.
    */
   data class ExecutionCancelled(
-    val turnId: TurnId,
-    val executionId: ExecutionId
+    val turnId: TurnId, val executionId: ExecutionId
   ) : TurnEvent()
 
   /**
@@ -768,8 +752,7 @@ sealed class TurnEvent {
    * @property decision the decision applied to the flow.
    */
   data class FlowDecisionApplied(
-    val turnId: TurnId,
-    val decision: FlowDecision
+    val turnId: TurnId, val decision: FlowDecision
   ) : TurnEvent()
 
   /**
@@ -788,8 +771,7 @@ sealed class TurnEvent {
    * @property to the new runtime state.
    */
   data class RuntimeStateChanged(
-    val from: RuntimeState,
-    val to: RuntimeState
+    val from: RuntimeState, val to: RuntimeState
   ) : TurnEvent()
 }
 
@@ -871,8 +853,7 @@ enum class RuntimeState {
  * @property state current lifecycle state of the runtime.
  */
 data class RuntimeSnapshot(
-  val engine: TurnsSnapshot,
-  val state: RuntimeState
+  val engine: TurnsSnapshot, val state: RuntimeState
 )
 
 /**
@@ -1020,16 +1001,12 @@ class TurnsEngine(
    * execution depth would be exceeded.
    */
   internal suspend fun executeChild(
-    parent: Execution,
-    turnActor: TurnActor
+    parent: Execution, turnActor: TurnActor
   ): Execution {
     ensureCanCreateChild(parent)
 
     val execution = createExecution(
-      turnActor = turnActor,
-      turnId = parent.turnId,
-      depth = parent.depth + 1,
-      parent = parent
+      turnActor = turnActor, turnId = parent.turnId, depth = parent.depth + 1, parent = parent
     )
 
     parent.attachChild(execution)
@@ -1066,10 +1043,7 @@ class TurnsEngine(
    * @return the newly created execution.
    */
   private fun createExecution(
-    turnActor: TurnActor,
-    turnId: TurnId,
-    depth: Int,
-    parent: Execution?
+    turnActor: TurnActor, turnId: TurnId, depth: Int, parent: Execution?
   ): Execution {
     val scope = ExecutionScope(this)
 
@@ -1105,16 +1079,14 @@ class TurnsEngine(
     }
 
     if (parent.state == ExecutionState.FAILED) {
-      throw parent.failure
-        ?: IllegalStateException("Parent failed")
+      throw parent.failure ?: IllegalStateException("Parent failed")
     }
 
     val attemptedDepth = parent.depth + 1
 
     if (attemptedDepth > maximumExecutionDepth) {
       throw MaximumExecutionDepthExceededException(
-        maximumExecutionDepth,
-        attemptedDepth
+        maximumExecutionDepth, attemptedDepth
       )
     }
   }
@@ -1133,8 +1105,7 @@ class TurnsEngine(
     }
 
     if (parent.state == ExecutionState.FAILED) {
-      throw parent.failure
-        ?: IllegalStateException("Parent failed")
+      throw parent.failure ?: IllegalStateException("Parent failed")
     }
   }
 
@@ -1175,9 +1146,7 @@ class TurnsEngine(
 
       events.onEvent(
         TurnEvent.ExecutionCompleted(
-          turnId = execution.turnId,
-          executionId = execution.id,
-          result = result
+          turnId = execution.turnId, executionId = execution.id, result = result
         )
       )
     } catch (e: CancellationException) {
@@ -1185,8 +1154,7 @@ class TurnsEngine(
 
       events.onEvent(
         TurnEvent.ExecutionCancelled(
-          turnId = execution.turnId,
-          executionId = execution.id
+          turnId = execution.turnId, executionId = execution.id
         )
       )
 
@@ -1196,9 +1164,7 @@ class TurnsEngine(
 
       events.onEvent(
         TurnEvent.ExecutionFailed(
-          turnId = execution.turnId,
-          executionId = execution.id,
-          failure = e
+          turnId = execution.turnId, executionId = execution.id, failure = e
         )
       )
 
@@ -1222,8 +1188,7 @@ class TurnsEngine(
     }
 
     if (execution.state == ExecutionState.FAILED) {
-      throw execution.failure
-        ?: IllegalStateException("Execution failed")
+      throw execution.failure ?: IllegalStateException("Execution failed")
     }
   }
 
@@ -1244,8 +1209,7 @@ class TurnsEngine(
     }
 
     if (execution.state == ExecutionState.FAILED) {
-      throw execution.failure
-        ?: IllegalStateException("Execution failed")
+      throw execution.failure ?: IllegalStateException("Execution failed")
     }
   }
 }
@@ -1271,8 +1235,7 @@ class TurnsEngine(
  * @param events sink receiving runtime lifecycle events.
  */
 class TurnsRuntime(
-  private val engine: TurnsEngine,
-  private val events: TurnEventSink = TurnEventSink {}
+  private val engine: TurnsEngine, private val events: TurnEventSink = TurnEventSink {}
 ) {
 
   /**
@@ -1289,11 +1252,9 @@ class TurnsRuntime(
    *
    * @return the current runtime snapshot.
    */
-  fun snapshot(): RuntimeSnapshot =
-    RuntimeSnapshot(
-      engine = engine.snapshot(),
-      state = state
-    )
+  fun snapshot(): RuntimeSnapshot = RuntimeSnapshot(
+    engine = engine.snapshot(), state = state
+  )
 
   /**
    * Changes the runtime state and emits a state-change event.
@@ -1310,8 +1271,7 @@ class TurnsRuntime(
 
     events.onEvent(
       TurnEvent.RuntimeStateChanged(
-        previous,
-        next
+        previous, next
       )
     )
   }
@@ -1337,10 +1297,7 @@ class TurnsRuntime(
 
     transition(RuntimeState.RUNNING)
 
-    while (
-      state == RuntimeState.RUNNING ||
-      state == RuntimeState.PAUSED
-    ) {
+    while (state == RuntimeState.RUNNING || state == RuntimeState.PAUSED) {
       yield()
 
       if (state == RuntimeState.PAUSED) {
@@ -1391,10 +1348,7 @@ class TurnsRuntime(
    * effect.
    */
   fun stop() {
-    if (
-      state == RuntimeState.RUNNING ||
-      state == RuntimeState.PAUSED
-    ) {
+    if (state == RuntimeState.RUNNING || state == RuntimeState.PAUSED) {
       transition(RuntimeState.FINISHED)
     }
   }
