@@ -1,208 +1,124 @@
-# FL Turns — API pública
+# FL-Turns — Referência Rápida da API
 
 **Package:** `com.lucasalfare.flturns`
 
-## 1. Propósito
-
-A FL Turns é uma engine genérica para **gerenciamento de turnos e execução de ações encadeadas**.
-
-Ela resolve quatro problemas principais:
-
-* determinar **quem recebe o próximo turno**;
-* executar a ação daquele ator;
-* permitir que uma execução gere **execuções filhas**, suspendendo a execução pai;
-* decidir como o fluxo de turnos continua depois da execução.
-
-A biblioteca **não conhece regras de jogo**.
-
-Ela não sabe o que é:
-
-* ataque;
-* defesa;
-* dano;
-* carta;
-* magia;
-* jogador;
-* inimigo;
-* recurso;
-* vitória;
-* animação;
-* input.
-
-Esses significados ficam na aplicação.
-
----
-
-# 2. Modelo mental
-
-A estrutura fundamental é:
-
-**TurnFlow → Turn → Execution → Execution Tree**
-
-Ou seja:
-
-**Fluxo de turnos**
-→ escolhe um ator
-→ produz um `Turn`
-→ cria uma `Execution`
-→ o handler executa a ação
-→ a execução pode criar filhos
-→ ao terminar, pode retornar uma `FlowDecision`
-→ o fluxo determina o próximo turno.
-
-Uma execução pode formar uma árvore:
-
-`Turn`
-→ `Root Execution`
-→ `Child Execution`
-→ `Grandchild Execution`
-
-Isso é particularmente importante para situações como **ações que precisam da resposta/intervenção de outro ator**.
-
----
-
-# 3. Identificadores
+## 1. Identidade
 
 ### `TurnActor`
 
-Representa quem está executando.
+* `id: String`
 
-```text
-TurnActor("player")
-TurnActor("goblin")
-TurnActor("player-2")
-```
-
-A biblioteca não interpreta o `id`.
-
----
+Identidade de quem executa um turno. O core não interpreta o significado do ator.
 
 ### `TurnId`
 
-Identifica exclusivamente um turno.
-
-Um mesmo ator pode possuir vários `TurnId`s ao longo do jogo.
-
----
+Identidade de um turno.
 
 ### `ExecutionId`
 
-Identifica exclusivamente uma execução.
-
-Cada execução recebe seu próprio ID, inclusive execuções filhas.
+Identidade de uma execução.
 
 ---
 
-# 4. `Turn`
+# 2. Turno
 
-Representa uma **oportunidade de ação**.
+### `Turn`
 
-Possui:
+Representa uma unidade de execução pertencente ao fluxo de turnos.
 
-* `id: TurnId`
-* `turnActor: TurnActor`
-
-Importante:
-
-**Turn não é a ação.**
-
-É apenas a oportunidade dada a determinado ator para executar alguma coisa.
+O turno define **quem executa** e seu comportamento; o significado da ação pertence à aplicação.
 
 ---
 
-# 5. `TurnFlow`
+# 3. Fluxo
 
-É a abstração responsável por determinar **a sequência de turnos**.
+### `TurnFlow`
 
-Principais operações:
+Interface responsável por determinar a sequência normal dos turnos.
 
-### `next(isEligible)`
+O fluxo controla a ordem entre turnos-raiz, mas não controla execuções filhas.
 
-Obtém o próximo `Turn` que pode executar.
+### `RoundRobinTurnFlow`
 
-A aplicação pode fornecer uma função de elegibilidade:
+Implementação padrão de fluxo circular.
 
-`Turn → Boolean`
-
-Isso permite, por exemplo, que um ator existente no fluxo seja temporariamente incapaz de agir.
-
-### `apply(decision)`
-
-Modifica o fluxo depois que um turno terminou.
-
-### `isEnded()`
-
-Informa se o fluxo terminou definitivamente.
+Percorre os atores em ordem e volta ao primeiro após o último.
 
 ---
 
-# 6. `RoundRobinTurnFlow`
+# 4. Decisão de fluxo
 
-Implementação pronta de `TurnFlow`.
+### `FlowDecision`
 
-Dado:
+Define o que acontece depois da execução de um turno.
 
-`A, B, C`
+Variantes:
 
-produz:
+* `Continue`
+* `Repeat`
+* `Insert`
+* `Skip`
+* `JumpTo`
+* `End`
 
-`A → B → C → A → B → C...`
+### `Continue`
 
-O fluxo também pode ser alterado dinamicamente.
+Prossegue para o próximo turno normal.
 
-### `FlowDecision.Continue`
+### `Repeat`
 
-Continua normalmente.
+Executa novamente o turno atual.
 
-`A → B → C`
+### `Insert`
 
-### `FlowDecision.Repeat`
+Insere uma nova execução no fluxo conforme a decisão.
 
-Repete o ator que acabou de agir.
+### `Skip`
 
-`A → A → B`
+Pula a próxima posição aplicável do fluxo.
 
-### `FlowDecision.Insert(actor)`
+### `JumpTo`
 
-Insere um novo ator no fluxo.
+Salta para um turno específico.
 
-### `FlowDecision.Skip`
+### `End`
 
-Pula a próxima oportunidade.
-
-### `FlowDecision.JumpTo(actor)`
-
-Move diretamente para determinado ator.
-
-O ator precisa existir no fluxo.
-
-### `FlowDecision.End`
-
-Encerra permanentemente o fluxo.
+Finaliza o fluxo.
 
 ---
 
-# 7. `Execution`
+# 5. Execução
 
-É a unidade real de **execução de uma ação**.
+### `Execution`
 
-Uma `Execution` possui:
+Representa uma execução concreta de um turno.
 
-* `id`
-* `turnActor`
-* `turnId`
-* `depth`
-* `parent`
-* `scope`
-* `result`
-* `state`
-* `failure`
+Possui sua própria identidade e estado de execução.
 
-Também permite consultar sua posição na árvore de execuções.
+Execuções formam uma árvore quando uma execução cria uma execução filha.
 
-### Estados
+---
 
-`ExecutionState`:
+### `ExecutionScope`
+
+Escopo disponível durante uma execução.
+
+### `execute(...)`
+
+Cria/executa uma execução filha.
+
+A execução filha:
+
+* pertence à execução atual;
+* suspende a execução pai enquanto está ativa;
+* não avança o `TurnFlow` normal;
+* retorna o controle ao pai quando termina.
+
+---
+
+# 6. `ExecutionState`
+
+Estados possíveis:
 
 * `RUNNING`
 * `SUSPENDED`
@@ -210,58 +126,13 @@ Também permite consultar sua posição na árvore de execuções.
 * `FAILED`
 * `CANCELLED`
 
-A aplicação consegue **observar** esses estados, mas não modificá-los diretamente.
+`SUSPENDED` representa uma execução que aguarda a conclusão de uma execução filha.
 
 ---
 
-# 8. Execuções aninhadas
+# 7. `TurnContext`
 
-Essa é uma das partes mais importantes da FL Turns.
-
-Uma execução recebe um:
-
-`ExecutionScope`
-
-E pode fazer:
-
-**executar outro ator**
-
-O resultado é uma nova `Execution` filha.
-
-Durante isso:
-
-`Parent → SUSPENDED`
-
-e:
-
-`Child → RUNNING`
-
-Quando o filho termina:
-
-`Child → COMPLETED`
-
-e:
-
-`Parent → RUNNING`
-
-Isso pode continuar recursivamente.
-
-Exemplo conceitual:
-
-```text
-Jogador usa habilidade
-└── inimigo precisa responder
-    └── outro efeito precisa ser resolvido
-        └── terceiro ator precisa reagir
-```
-
-A FL Turns fornece a estrutura dessa cadeia, mas **não define o significado dessas ações**.
-
----
-
-# 9. `TurnContext`
-
-É o contexto fornecido ao handler.
+Contexto recebido durante a execução de um turno.
 
 Contém:
 
@@ -272,344 +143,158 @@ Contém:
 * `parent`
 * `scope`
 
-Portanto, dentro de uma ação, a aplicação consegue saber:
-
-**quem está agindo → em qual turno → em qual execução → em qual profundidade → quem chamou essa execução → como criar
-uma execução filha.**
+Permite ao turno conhecer sua execução atual e criar execuções filhas.
 
 ---
 
-# 10. `TurnsEngine`
-
-É o **núcleo principal da biblioteca**.
-
-Configuração:
-
-* `handler`
-* `flow`
-* `isEligible`
-* `maximumExecutionDepth`
-* `events`
-
-### Handler
-
-O handler é:
-
-`suspend (TurnContext) -> Any?`
-
-É aqui que **o jogo fornece o significado da execução**.
-
-A FL Turns chama o handler.
-
-O jogo decide o que fazer.
-
-O retorno do handler pode ser qualquer coisa.
-
-Porém existe uma convenção especial:
-
-**se o resultado for `FlowDecision`, ele será interpretado pelo engine como uma decisão sobre o fluxo.**
-
-Isso permite que uma ação retorne, por exemplo:
-
-`FlowDecision.Repeat`
-
-sem o handler precisar conhecer diretamente o `TurnFlow`.
-
----
-
-# 11. `executeNextTurn()`
-
-É a operação fundamental do engine.
-
-Executa **um único turno completo**.
-
-Fluxo:
-
-`TurnFlow.next()`
-
-→ cria `Execution`
-
-→ `TurnStarted`
-
-→ executa handler
-
-→ resolve possíveis execuções filhas
-
-→ interpreta `FlowDecision`
-
-→ aplica decisão ao fluxo
-
-→ emite eventos correspondentes
-
-→ retorna a `Execution` raiz.
-
-Isso é provavelmente a API mais importante para o jogo quando quisermos controlar o processamento manualmente.
-
----
-
-# 12. `TurnsRuntime`
-
-É uma camada superior ao `TurnsEngine`.
-
-A diferença fundamental:
+# 8. Motor
 
 ### `TurnsEngine`
 
-Executa **um turno**.
+Orquestra o sistema de turnos.
 
-### `TurnsRuntime`
+Responsável por:
 
-Fica executando turnos continuamente.
+* executar turnos;
+* aplicar `FlowDecision`;
+* controlar o fluxo normal;
+* controlar execuções filhas;
+* manter a execução atual;
+* impedir avanço normal enquanto existe execução filha ativa.
 
-Seu ciclo é:
+### Regra principal
 
-`RUNNING`
+Existe somente **um turno-raiz em execução por vez**.
 
-→ `executeNextTurn()`
-
-→ próximo turno
-
-→ `executeNextTurn()`
-
-→ próximo turno...
-
-até o fluxo terminar.
+Execuções filhas fazem parte da árvore de execução e não avançam o fluxo normal.
 
 ---
 
-# 13. `RuntimeState`
+# 9. `TurnRuntime`
 
-Estados do runtime:
+Responsável pelo loop de execução do motor.
 
-* `IDLE`
-* `RUNNING`
-* `PAUSED`
-* `FINISHED`
+A aplicação não precisa implementar seu próprio `while` para processar turnos.
 
-Operações públicas:
+O runtime mantém a evolução do motor enquanto houver trabalho de execução.
 
-### `start()`
-
-Inicia o loop contínuo.
-
-### `pause()`
-
-Pausa entre turnos.
-
-### `resume()`
-
-Continua um runtime pausado.
-
-### `stop()`
-
-Finaliza o runtime.
-
-Importante:
-
-**pausar/parar o Runtime não altera o `TurnFlow`.**
-
-Ele apenas controla o processamento contínuo.
+O loop de jogo/renderização da aplicação continua independente.
 
 ---
 
-# 14. Snapshots
+# 10. Eventos
 
-A biblioteca oferece duas formas de observar o estado atual.
+### `TurnEvent`
 
-### `TurnsSnapshot`
+Representa eventos relacionados à execução do sistema de turnos.
 
-Estado do engine:
-
-* turno atual;
-* ator atual;
-* execução atual;
-* profundidade;
-* execuções ativas;
-* estado do fluxo.
-
-### `RuntimeSnapshot`
-
-Combina:
-
-`TurnsSnapshot + RuntimeState`
-
-Isso é útil principalmente para:
-
-* UI;
-* debug;
-* monitoramento;
-* persistência;
-* ferramentas de desenvolvimento.
+Serve para observar transições do motor sem acoplar o core à apresentação ou às regras do jogo.
 
 ---
 
-# 15. Eventos
-
-A FL Turns possui um sistema observável através de:
-
-`TurnEventSink`
-
-O consumidor simplesmente recebe:
-
-`onEvent(event)`
-
-Os eventos disponíveis são:
-
-### `TurnStarted`
-
-Um novo turno começou.
-
-### `ExecutionStarted`
-
-Uma execução começou.
-
-### `ExecutionCompleted`
-
-Uma execução terminou normalmente.
-
-Inclui seu resultado.
-
-### `ExecutionFailed`
-
-Uma execução falhou.
-
-Inclui a exceção.
-
-### `ExecutionCancelled`
-
-Uma execução foi cancelada.
-
-### `FlowDecisionApplied`
-
-Uma decisão foi aplicada ao fluxo.
-
-### `TurnFlowEnded`
-
-O fluxo terminou.
-
-### `RuntimeStateChanged`
-
-O runtime mudou de estado.
-
----
-
-# 16. Exceções públicas
+# 11. Exceções
 
 ### `NoExecutableTurnException`
 
-O `TurnFlow` não conseguiu encontrar um turno elegível.
+Indica que o fluxo não possui um turno executável quando uma execução é necessária.
 
 ### `MaximumExecutionDepthExceededException`
 
-Uma execução tentou criar um filho além do limite configurado.
+Indica que a profundidade máxima permitida para execuções aninhadas foi excedida.
 
-O limite começa em:
-
-`depth = 0`
-
-Portanto:
-
-`maximumExecutionDepth = 0`
-
-permite execução raiz, mas nenhuma execução filha.
+Protege o motor contra recursão ilimitada de execuções filhas.
 
 ---
 
-# 17. Arquitetura conceitual da biblioteca
+# 12. Regras fundamentais
 
-A divisão de responsabilidades pode ser resumida assim:
+### Fluxo normal × árvore de execução
 
-```text
-                    ┌──────────────┐
-                    │  TurnFlow    │
-                    │ "quem agora?"│
-                    └──────┬───────┘
-                           │
-                           ▼
-                         Turn
-                           │
-                           ▼
-                    ┌──────────────┐
-                    │ TurnsEngine  │
-                    │ "execute"    │
-                    └──────┬───────┘
-                           │
-                           ▼
-                      TurnContext
-                           │
-                           ▼
-                        Handler
-                           │
-                 ┌─────────┴─────────┐
-                 ▼                   ▼
-          ação normal          child execution
-                                     │
-                                     ▼
-                               Execution Tree
-                 │
-                 ▼
-          FlowDecision
-                 │
-                 ▼
-             TurnFlow
-```
+São conceitos separados.
+
+**TurnFlow** determina:
+
+`A → B → C → ...`
+
+**Execution** determina:
+
+`A → execução filha → execução filha da filha → ...`
+
+Uma execução filha não avança o fluxo normal.
 
 ---
 
-# 18. O que a FL Turns fornece ao nosso jogo
+### Suspensão
 
-Na prática, quando começarmos o jogo, essa biblioteca pode cuidar de:
+Quando uma execução cria uma filha:
 
-**ordenação temporal de ações + execução hierárquica + continuidade do fluxo.**
+`pai = SUSPENDED`
 
-Por exemplo, futuramente poderemos representar algo conceitualmente como:
+`filha = RUNNING`
 
-`Jogador A recebe turno`
-
-→ executa ação
-
-→ ação exige resposta de Jogador B
-
-→ Jogador B executa resposta
-
-→ resposta exige reação de Jogador A
-
-→ reação termina
-
-→ Jogador B termina
-
-→ Jogador A termina
-
-→ decisão determina próximo turno.
-
-A FL Turns fornece **toda a estrutura dessa cadeia**, sem precisar saber se isso é combate, diálogo, negociação, carta,
-magia, interação social ou qualquer outra coisa.
+Quando a filha termina, o pai pode continuar.
 
 ---
 
-## Referência rápida
+### Turno-raiz
 
-| Componente           | Responsabilidade         |
-|----------------------|--------------------------|
-| `TurnActor`          | Identifica participante  |
-| `TurnId`             | Identifica turno         |
-| `ExecutionId`        | Identifica execução      |
-| `Turn`               | Oportunidade de ação     |
-| `TurnFlow`           | Estratégia de progressão |
-| `RoundRobinTurnFlow` | Fluxo circular pronto    |
-| `FlowDecision`       | Modifica o próximo fluxo |
-| `Execution`          | Execução de uma ação     |
-| `ExecutionScope`     | Criação de ações filhas  |
-| `TurnContext`        | Contexto da ação         |
-| `ExecutionState`     | Estado da execução       |
-| `TurnsEngine`        | Processamento de turnos  |
-| `TurnsRuntime`       | Loop contínuo            |
-| `TurnsSnapshot`      | Estado do engine         |
-| `RuntimeSnapshot`    | Estado engine + runtime  |
-| `TurnEvent`          | Eventos observáveis      |
-| `TurnEventSink`      | Consumidor de eventos    |
+Somente a execução-raiz participa do avanço normal do `TurnFlow`.
 
-**Essencialmente:**
+Execuções internas existem para representar respostas, interrupções, sequências condicionais e outras estruturas de
+execução sem alterar a ordem normal dos turnos.
 
-> **FL Turns não define o que acontece em um turno. Ela define como ações acontecem, se encadeiam e como o sistema
-avança de um turno para outro.**
+---
+
+# 13. Modelo mental rápido
+
+### Quem executa
+
+`TurnActor`
+
+### O que executa
+
+`Turn`
+
+### Em qual ordem
+
+`TurnFlow`
+
+### Como o fluxo reage
+
+`FlowDecision`
+
+### Execução concreta
+
+`Execution`
+
+### Execução dentro de execução
+
+`ExecutionScope`
+
+### Estado da execução
+
+`ExecutionState`
+
+### Informações disponíveis ao turno
+
+`TurnContext`
+
+### Coordenação
+
+`TurnsEngine`
+
+### Loop de processamento
+
+`TurnRuntime`
+
+### Observação
+
+`TurnEvent`
+
+### Erros estruturais
+
+`NoExecutableTurnException` / `MaximumExecutionDepthExceededException`
+
+### Regra central
+
+**O jogo fornece o significado. O core fornece a estrutura de turnos e execuções.**
